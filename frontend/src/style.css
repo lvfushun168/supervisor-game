@@ -1,0 +1,145 @@
+* {
+  box-sizing: border-box;
+}
+
+:root {
+  color: #f5f7fb;
+  background: #111418;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button {
+  min-width: 112px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  padding: 12px 18px;
+  color: #101318;
+  background: #e6c86f;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+button.secondary {
+  color: #f5f7fb;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 24px;
+  min-height: 100vh;
+  padding: 24px;
+  background:
+    linear-gradient(120deg, rgba(28, 34, 40, 0.84), rgba(11, 14, 18, 0.92)),
+    radial-gradient(circle at 30% 20%, rgba(226, 200, 111, 0.16), transparent 34%),
+    #111418;
+}
+
+.stage {
+  position: relative;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  min-height: calc(100vh - 48px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  overflow: hidden;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    #171c22;
+  background-size: 48px 48px;
+}
+
+.scene-label {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  color: #aeb7c3;
+  font-size: 14px;
+  text-transform: uppercase;
+}
+
+.timer {
+  font-size: clamp(64px, 11vw, 156px);
+  font-weight: 800;
+  line-height: 1;
+}
+
+.status {
+  margin: 18px 0 28px;
+  color: #c8d0da;
+  font-size: 18px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+
+.hud {
+  align-self: start;
+  padding: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(21, 26, 32, 0.92);
+}
+
+.hud h1 {
+  margin: 0 0 24px;
+  font-size: 24px;
+}
+
+.hud dl {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+
+.hud dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.hud dt {
+  color: #aeb7c3;
+}
+
+.hud dd {
+  margin: 0;
+  font-weight: 800;
+}
+
+@media (max-width: 840px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+    padding: 16px;
+  }
+
+  .stage {
+    min-height: 60vh;
+  }
+
+  .hud {
+    width: 100%;
+  }
+}
