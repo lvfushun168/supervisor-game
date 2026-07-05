@@ -64,6 +64,7 @@ TODO: 客户暂未提供失败动作视频，当前先使用 patrol_suspicious.m
   - `APP_KEY`
   - `DB_DSN`
   - `ASSETS_DIR`
+  - `CONFIG_ENCRYPTION_KEY`
 - 建立统一错误响应结构。
 - 建立 `/api/health`。
 - 建立静态资源托管：
@@ -74,6 +75,20 @@ TODO: 客户暂未提供失败动作视频，当前先使用 patrol_suspicious.m
   - 数据库连接状态。
   - assets 目录。
   - 当前运行模式。
+
+### 3.2.1 数据库配置自举规则
+
+MySQL 是本项目唯一主存储。由于管理端保存的 MySQL 连接配置也存放在 MySQL 中，第一版按以下规则处理首次启动和后续修改：
+
+- 首次启动必须通过 `DB_DSN` 或 `.env` 提供可连接的 MySQL DSN。
+- 服务启动成功并完成迁移后，才允许在管理端保存 `mysql_configs`。
+- 服务启动时先使用 `DB_DSN` 作为 bootstrap 连接读取配置表；若存在已启用的 `mysql_configs`，再切换为该连接作为运行期主连接。
+- 如果 bootstrap 数据库中不存在已启用的 `mysql_configs`，则直接使用 `DB_DSN` 作为运行期主连接。
+- 管理端修改 MySQL 连接配置后，第一版只要求提示“重启服务后生效”，不做运行时热切换。
+- 如果已启用的 `mysql_configs` 连接失败，服务应回退到 bootstrap `DB_DSN` 并在日志和 `/api/admin/status` 中暴露明确状态。
+- `.env.example` 必须明确写出首次启动需要准备 MySQL 8.0，并创建目标数据库。
+
+`CONFIG_ENCRYPTION_KEY` 用于本地加密 API Key 和数据库密码。第一版可使用 AES-GCM；如果暂未实现加密，必须使用 `TODO:` 标记，并保证密钥字段不会通过用户端 API 下发。
 
 ### 3.3 前端任务
 
@@ -122,6 +137,7 @@ TODO: 客户暂未提供失败动作视频，当前先使用 patrol_suspicious.m
 
 - `AppSetting`
 - `Character`
+- `UserSetting`
 - `Scene`
 - `ActionConfig`
 - `ModelConfig`
@@ -136,6 +152,56 @@ TODO: 客户暂未提供失败动作视频，当前先使用 patrol_suspicious.m
 - `UserProgress`
 
 ### 4.3 字段要求
+
+`app_settings`：
+
+- `id`
+- `setting_key`
+- `setting_value_json`
+- `description`
+- `created_at`
+- `updated_at`
+
+唯一约束：
+
+- `setting_key`
+
+`characters`：
+
+- `id`
+- `character_key`
+- `name`
+- `enabled`
+- `description`
+- `avatar_url`
+- `profile_json`
+- `voice_style`
+- `default_scene_key`
+- `metadata_json`
+- `created_at`
+- `updated_at`
+
+唯一约束：
+
+- `character_key`
+
+`user_settings`：
+
+- `id`
+- `mode`
+- `custom_duration_seconds`
+- `patrol_frequency`
+- `background_audio_key`
+- `background_volume`
+- `action_volume`
+- `ui_volume`
+- `quiet_patrol_enabled`
+- `screen_filter`
+- `camera_enabled`
+- `camera_device_id`
+- `metadata_json`
+- `created_at`
+- `updated_at`
 
 `scenes`：
 
@@ -211,6 +277,26 @@ TODO: 客户暂未提供失败动作视频，当前先使用 patrol_suspicious.m
 - `created_at`
 - `updated_at`
 
+`patrol_rules`：
+
+- `id`
+- `slow_min_seconds`
+- `slow_max_seconds`
+- `normal_min_seconds`
+- `normal_max_seconds`
+- `high_min_seconds`
+- `high_max_seconds`
+- `max_warnings`
+- `max_violations`
+- `suspicious_adds_warning`
+- `violation_direct_fail`
+- `camera_off_strategy`
+- `capture_failed_strategy`
+- `model_timeout_retry_count`
+- `user_error_message`
+- `created_at`
+- `updated_at`
+
 `work_sessions`：
 
 - `id`
@@ -245,6 +331,87 @@ TODO: 客户暂未提供失败动作视频，当前先使用 patrol_suspicious.m
 - `error_code`
 - `created_at`
 
+`daily_stats`：
+
+- `id`
+- `stat_date`
+- `focus_seconds`
+- `session_count`
+- `patrol_count`
+- `warning_count`
+- `violation_count`
+- `earned_currency`
+- `last_result`
+- `created_at`
+- `updated_at`
+
+唯一约束：
+
+- `stat_date`
+
+`tasks`：
+
+- `id`
+- `task_key`
+- `name`
+- `description`
+- `task_type`
+- `target_value`
+- `reward_currency`
+- `enabled`
+- `sort_order`
+- `metadata_json`
+- `created_at`
+- `updated_at`
+
+唯一约束：
+
+- `task_key`
+
+`task_records`：
+
+- `id`
+- `task_key`
+- `record_date`
+- `progress_value`
+- `status`
+- `claimed_at`
+- `created_at`
+- `updated_at`
+
+唯一约束：
+
+- `task_key + record_date`
+
+`badges`：
+
+- `id`
+- `badge_key`
+- `name`
+- `description`
+- `enabled`
+- `unlocked`
+- `unlocked_at`
+- `metadata_json`
+- `created_at`
+- `updated_at`
+
+唯一约束：
+
+- `badge_key`
+
+`user_progress`：
+
+- `id`
+- `level`
+- `total_focus_seconds`
+- `currency`
+- `current_streak_days`
+- `longest_streak_days`
+- `last_focus_date`
+- `created_at`
+- `updated_at`
+
 ### 4.4 后端服务
 
 - 建立 repository/service 分层。
@@ -259,6 +426,13 @@ TODO: 客户暂未提供失败动作视频，当前先使用 patrol_suspicious.m
 - seed 必须幂等，多次执行不能重复创建。
 - JSON 字段统一以 string 存储，读写时校验合法 JSON。
 - 密钥字段第一版可以使用可逆加密或本地简单加密；如果暂未实现加密，必须写 `TODO:` 并确保不下发前端。
+- 枚举字段必须在 service 层校验，不能只依赖前端：
+  - `mode`：`pomodoro`、`custom`、`infinite`
+  - `patrol_frequency`：`slow`、`normal`、`high`
+  - `session.result`：`success`、`left`、`failed`、`abandoned`
+  - `finish_reason`：`countdown_complete`、`user_stop`、`max_warning`、`max_violation`、`page_unload`
+  - `task_records.status`：`pending`、`claimable`、`claimed`
+  - `camera_off_strategy` 和 `capture_failed_strategy`：`normal`、`suspicious`、`violation`、`uncertain`
 
 ### 4.5 API
 
@@ -267,6 +441,47 @@ TODO: 客户暂未提供失败动作视频，当前先使用 patrol_suspicious.m
 - `GET /api/health`
 - `GET /api/runtime/config`
 - `GET /api/scenes`
+- `GET /api/settings`
+- `PUT /api/settings`
+
+`GET /api/runtime/config` 响应示例：
+
+```json
+{
+  "app": {
+    "env": "development",
+    "assetsBaseUrl": "/assets/",
+    "serverTime": "2026-07-06T10:00:00+08:00"
+  },
+  "patrolRule": {
+    "slow": { "minSeconds": 180, "maxSeconds": 480 },
+    "normal": { "minSeconds": 60, "maxSeconds": 240 },
+    "high": { "minSeconds": 30, "maxSeconds": 120 },
+    "maxWarnings": 3,
+    "maxViolations": 3,
+    "cameraOffStrategy": "suspicious",
+    "captureFailedStrategy": "uncertain",
+    "userErrorMessage": "巡查系统暂不可用，请联系管理员处理。"
+  },
+  "character": {
+    "characterKey": "default_oc",
+    "name": "督学员"
+  },
+  "userSetting": {
+    "mode": "pomodoro",
+    "customDurationSeconds": 1500,
+    "patrolFrequency": "normal",
+    "backgroundVolume": 0.4,
+    "actionVolume": 0.8,
+    "uiVolume": 0.6,
+    "quietPatrolEnabled": false,
+    "screenFilter": "normal",
+    "cameraEnabled": true
+  }
+}
+```
+
+`GET /api/settings` 返回当前 `user_settings`。`PUT /api/settings` 保存用户配置，请求字段与 `userSetting` 相同；服务端负责填充默认值并校验枚举和音量范围。
 
 ### 4.6 验收标准
 
@@ -302,11 +517,24 @@ TODO: 客户暂未提供失败动作视频，当前先使用 patrol_suspicious.m
 管理端至少包含以下页面或 Tab：
 
 - 运行状态。
+- 运行时配置预览。
+- 角色配置。
 - 场景配置。
 - 动作配置。
 - 大模型配置。
 - 巡查规则。
 - MySQL 连接配置。
+
+运行状态至少展示：
+
+- 服务版本和启动时间。
+- 当前监听地址。
+- 当前生效的 MySQL 来源：`mysql_configs` 或 `DB_DSN`。
+- 当前 MySQL 连接状态和最近错误。
+- assets 目录和可访问状态。
+- 当前启用场景、大模型和巡查规则摘要。
+
+运行时配置预览调用 `GET /api/admin/runtime-config`，返回用户端最终可见配置加管理端诊断信息，但仍不得返回明文 API Key、数据库密码或 appkey。
 
 ### 5.4 场景配置
 
@@ -400,7 +628,34 @@ TODO: 客户暂未提供失败动作视频，当前先使用 patrol_suspicious.m
 - 不得通过用户端 API 下发 API Key。
 - TODO: 如果第一版没有图片测试上传能力，必须保留测试按钮位置并标记原因。
 
-### 5.7 巡查规则配置
+### 5.7 角色配置
+
+后端 API：
+
+- `GET /api/admin/characters`
+- `POST /api/admin/characters`
+- `PUT /api/admin/characters/:id`
+- `DELETE /api/admin/characters/:id`
+
+前端能力：
+
+- 列表展示。
+- 新增角色。
+- 编辑角色基础信息。
+- 启用/禁用。
+- 配置头像路径。
+- 编辑角色档案 JSON。
+- 设置默认场景。
+- 编辑 metadata JSON。
+
+校验：
+
+- `characterKey` 必填，只允许英文、数字、下划线。
+- `characterKey` 唯一。
+- 启用角色必须配置名称。
+- `defaultSceneKey` 如果填写，必须指向存在的场景。
+
+### 5.8 巡查规则配置
 
 后端 API：
 
@@ -420,7 +675,14 @@ TODO: 客户暂未提供失败动作视频，当前先使用 patrol_suspicious.m
 - 大模型超时重试次数。
 - 错误提示文案。
 
-### 5.8 MySQL 连接配置
+校验：
+
+- 每档巡查 `minSeconds` 必须大于 0。
+- 每档巡查 `maxSeconds` 必须大于等于 `minSeconds`。
+- 最大警告数和最大案底数必须大于 0。
+- 摄像头关闭策略、截图失败策略只允许 `normal`、`suspicious`、`violation`、`uncertain`。
+
+### 5.9 MySQL 连接配置
 
 后端 API：
 
@@ -450,16 +712,22 @@ TODO: 客户暂未提供失败动作视频，当前先使用 patrol_suspicious.m
 - 密码默认脱敏显示。
 - 修改连接后允许提示重启服务生效。
 - 第一版不要求无重启热切换。
+- 测试连接只验证目标 MySQL 是否可连接和认证是否成功，不自动切换当前服务连接。
+- 执行迁移只允许对当前生效连接执行；如果要对新配置执行迁移，必须先保存配置并重启。
+- 保存配置后，`GET /api/admin/status` 应提示待重启状态。
 
-### 5.9 验收标准
+### 5.10 验收标准
 
 - 使用正确 appkey 可以进入管理端。
 - 错误 appkey 无法访问管理员 API。
+- 可以查看运行状态和运行时配置预览。
+- 可以新增、编辑、删除、启用、禁用角色。
 - 可以新增、编辑、删除、启用、禁用场景。
 - 可以新增、编辑、删除、启用、禁用动作。
 - 可以编辑并保存大模型配置。
 - 可以编辑并保存巡查规则。
 - 可以编辑并测试 MySQL 连接。
+- 修改 MySQL 连接后能看到“重启后生效”提示。
 - 管理端保存后刷新页面配置不丢失。
 - 用户端 runtime config 能读取管理端保存的启用配置。
 
@@ -543,6 +811,87 @@ TODO: 巡查状态将在 M4 接入，当前只保留状态枚举和 UI 占位。
 - `finishReason`
 - `actualFocusSeconds`
 
+请求和响应示例：
+
+```json
+{
+  "sceneKey": "study_room",
+  "mode": "pomodoro",
+  "plannedDurationSeconds": 1500,
+  "userConfig": {
+    "patrolFrequency": "normal",
+    "cameraEnabled": true
+  }
+}
+```
+
+`POST /api/session/start` 成功响应：
+
+```json
+{
+  "session": {
+    "id": 1,
+    "sceneKey": "study_room",
+    "mode": "pomodoro",
+    "plannedDurationSeconds": 1500,
+    "startedAt": "2026-07-06T10:00:00+08:00",
+    "status": "working",
+    "warningCount": 0,
+    "violationCount": 0
+  }
+}
+```
+
+`POST /api/session/pause`、`POST /api/session/resume` 请求：
+
+```json
+{
+  "sessionId": 1
+}
+```
+
+`POST /api/session/finish` 请求：
+
+```json
+{
+  "sessionId": 1,
+  "finishReason": "user_stop",
+  "actualFocusSeconds": 620
+}
+```
+
+`finishReason` 只允许：
+
+- `countdown_complete`
+- `user_stop`
+- `max_warning`
+- `max_violation`
+- `page_unload`
+
+`POST /api/session/finish` 成功响应：
+
+```json
+{
+  "settlement": {
+    "sessionId": 1,
+    "result": "left",
+    "actualFocusSeconds": 620,
+    "patrolCount": 2,
+    "warningCount": 1,
+    "violationCount": 0,
+    "earnedCurrency": 0,
+    "levelBefore": 1,
+    "levelAfter": 1,
+    "currencyAfter": 30,
+    "settlementAction": {
+      "actionKey": "finish_success",
+      "videoUrl": "assets/actions/study_room/finish_success.mp4",
+      "posterUrl": ""
+    }
+  }
+}
+```
+
 ### 6.5 计时规则
 
 - 番茄钟模式倒计时。
@@ -552,6 +901,8 @@ TODO: 巡查状态将在 M4 接入，当前只保留状态枚举和 UI 占位。
 - 主动结束时弹确认。
 - 倒计时归零自动结算。
 - 页面刷新后第一版可以回到 `idle` 并提示上一局异常结束。
+- 页面刷新、关闭或前端无法恢复运行态时，前端应尽力调用 `finishReason=page_unload`；如果调用失败，下一次启动时后端将最近一条未结束 session 标记为 `abandoned`，但不进入正常结算页。
+- `abandoned` session 只记录实际已知时长，不发放完成奖励，不触发“完成一次劳动”任务。
 
 ### 6.6 用户配置
 
@@ -567,6 +918,36 @@ TODO: 巡查状态将在 M4 接入，当前只保留状态枚举和 UI 占位。
 - 画面滤镜。
 - 摄像头开关。
 
+用户配置 API：
+
+- `GET /api/settings`
+- `PUT /api/settings`
+
+`PUT /api/settings` 请求示例：
+
+```json
+{
+  "mode": "pomodoro",
+  "customDurationSeconds": 1500,
+  "patrolFrequency": "normal",
+  "backgroundAudioKey": "library",
+  "backgroundVolume": 0.4,
+  "actionVolume": 0.8,
+  "uiVolume": 0.6,
+  "quietPatrolEnabled": false,
+  "screenFilter": "normal",
+  "cameraEnabled": true,
+  "cameraDeviceId": ""
+}
+```
+
+校验：
+
+- 音量范围为 `0` 到 `1`。
+- 自定义时长必须大于等于 300 秒。
+- `screenFilter` 第一版只允许 `normal`、`grayscale`、`dark`。
+- 前端可以用 localStorage 缓存最近设置，但页面加载后必须以服务端返回为准。
+
 ### 6.7 验收标准
 
 - 用户能选择启用场景。
@@ -579,6 +960,7 @@ TODO: 巡查状态将在 M4 接入，当前只保留状态枚举和 UI 占位。
 - 倒计时结束后进入成功结算页。
 - session 记录保存到 MySQL。
 - 用户配置刷新后仍保留。
+- 页面刷新造成的未完成 session 能被标记为 `abandoned` 或 `page_unload`。
 - 全屏按钮可用。
 
 验收人签名_____
@@ -653,6 +1035,7 @@ TODO: 巡查状态将在 M4 接入，当前只保留状态枚举和 UI 占位。
 - `imageBase64`
 - `cameraEnabled`
 - `manualViolation`
+- `captureErrorCode`
 
 响应字段：
 
@@ -663,6 +1046,70 @@ TODO: 巡查状态将在 M4 接入，当前只保留状态枚举和 UI 占位。
 - `warningDelta`
 - `violationDelta`
 - `sessionSummary`
+
+请求示例：
+
+```json
+{
+  "sessionId": 1,
+  "sceneKey": "study_room",
+  "imageBase64": "data:image/jpeg;base64,/9j/...",
+  "cameraEnabled": true,
+  "manualViolation": false,
+  "captureErrorCode": ""
+}
+```
+
+摄像头关闭或截图失败时：
+
+- `cameraEnabled=false` 且 `imageBase64` 为空，由后端按 `cameraOffStrategy` 生成状态并写入巡查记录。
+- 截图失败时传 `captureErrorCode`，例如 `PERMISSION_DENIED`、`DEVICE_NOT_FOUND`、`CAPTURE_FAILED`，由后端按 `captureFailedStrategy` 生成状态并写入巡查记录。
+- 如果后台策略要求调用模型，但 `imageBase64` 为空，后端必须返回 `CAMERA_FRAME_MISSING`，不得调用模型。
+
+成功响应示例：
+
+```json
+{
+  "status": "using_phone",
+  "confidence": 0.91,
+  "reason": "检测到用户手持手机且视线离开屏幕。",
+  "action": {
+    "actionKey": "patrol_phone",
+    "name": "抓到玩手机",
+    "videoUrl": "assets/actions/study_room/patrol_phone.mp4",
+    "posterUrl": "assets/actions/study_room/patrol_phone.jpg",
+    "durationMs": 6500
+  },
+  "warningDelta": 1,
+  "violationDelta": 1,
+  "sessionSummary": {
+    "sessionId": 1,
+    "patrolCount": 3,
+    "warningCount": 2,
+    "violationCount": 1,
+    "failed": false,
+    "finishReason": ""
+  }
+}
+```
+
+失败响应示例：
+
+```json
+{
+  "error": {
+    "code": "MODEL_CONFIG_MISSING",
+    "message": "巡查系统暂不可用，请联系管理员处理。"
+  }
+}
+```
+
+落库规则：
+
+- 每次调用 `/api/patrol/check` 都应写入 `patrol_records`，包括模型错误、摄像头错误和动作缺失。
+- 模型错误不增加警告或案底，除非后台规则明确配置为 `suspicious` 或 `violation`。
+- 动作缺失时返回错误并记录 `ACTION_CONFIG_MISSING`，不更新 session 的警告和案底。
+- 达到失败条件时，后端响应 `sessionSummary.failed=true` 和对应 `finishReason`，前端随后进入失败结算。
 
 ### 7.6 大模型调用
 
@@ -684,6 +1131,7 @@ TODO: 巡查状态将在 M4 接入，当前只保留状态枚举和 UI 占位。
 - `confidence` 必须是数字。
 - `reason` 必须是字符串。
 - `actionKey` 如果存在，必须能映射到启用动作。
+- 如果模型返回额外字段，只允许保存到 `model_raw_json`，不得直接参与业务判断。
 
 ### 7.7 动作映射和播放
 
@@ -765,6 +1213,50 @@ API：
 
 - `GET /api/profile/stats`
 
+响应示例：
+
+```json
+{
+  "today": {
+    "date": "2026-07-06",
+    "focusSeconds": 3600,
+    "sessionCount": 2,
+    "patrolCount": 5,
+    "warningCount": 1,
+    "violationCount": 0,
+    "earnedCurrency": 30,
+    "lastResult": "success"
+  },
+  "history": [
+    {
+      "sessionId": 1,
+      "startedAt": "2026-07-06T10:00:00+08:00",
+      "actualFocusSeconds": 1500,
+      "patrolCount": 3,
+      "violationCount": 0,
+      "result": "success",
+      "finishReason": "countdown_complete"
+    }
+  ],
+  "chart": [
+    { "date": "2026-07-06", "focusSeconds": 3600 }
+  ],
+  "progress": {
+    "level": 2,
+    "totalFocusSeconds": 3900,
+    "currentLevelSeconds": 3600,
+    "nextLevelSeconds": 36000,
+    "currency": 30,
+    "currentStreakDays": 1
+  },
+  "character": {
+    "characterKey": "default_oc",
+    "name": "督学员",
+    "profile": {}
+  }
+}
+```
+
 展示：
 
 - 今日专注时长。
@@ -800,6 +1292,15 @@ API：
 
 第一版不做消耗。
 
+第一版默认奖励规则：
+
+- 倒计时正常完成：`10` 货币。
+- 无限模式达到最低有效时长后主动结束：每满 10 分钟 `5` 货币，最多按 60 分钟计算。
+- 无案底完成劳动：额外 `20` 货币。
+- 禁闭失败：不发放完成奖励，可保留任务以外的已获得货币。
+- 主动撤离：记录有效时长，但不发放完成奖励。
+- `abandoned`：不发放奖励。
+
 TODO: 如果客户要求货币消费功能，另行增加商店或兑换配置，本版不实现。
 
 ### 8.6 任务
@@ -811,11 +1312,11 @@ API：
 
 默认任务：
 
-- 完成一次劳动。
-- 连续专注 10 分钟。
-- 今日无案底完成劳动。
-- 开启摄像头完成一次劳动。
-- 查看角色档案。
+- 完成一次劳动：`complete_session`，奖励 10。
+- 连续专注 10 分钟：`focus_10_minutes`，奖励 5。
+- 今日无案底完成劳动：`clean_session`，奖励 20。
+- 开启摄像头完成一次劳动：`camera_session`，奖励 10。
+- 查看角色档案：`view_profile`，奖励 3。
 
 规则：
 
@@ -823,6 +1324,40 @@ API：
 - 同一任务每日只能领取一次。
 - 完成后进入可领取状态。
 - 领取后增加货币。
+
+任务进度更新时机：
+
+- session 结束后更新 `complete_session`、`focus_10_minutes`、`clean_session`、`camera_session`。
+- 用户访问档案页后更新 `view_profile`。
+- 任务记录以 `task_key + record_date` 唯一，重复触发只更新进度，不重复创建。
+
+`GET /api/tasks/today` 响应示例：
+
+```json
+{
+  "tasks": [
+    {
+      "taskKey": "complete_session",
+      "name": "完成一次劳动",
+      "progressValue": 1,
+      "targetValue": 1,
+      "rewardCurrency": 10,
+      "status": "claimable"
+    }
+  ]
+}
+```
+
+`POST /api/tasks/:id/claim` 成功响应：
+
+```json
+{
+  "taskKey": "complete_session",
+  "status": "claimed",
+  "rewardCurrency": 10,
+  "currencyAfter": 40
+}
+```
 
 ### 8.7 每日统计
 
@@ -841,6 +1376,13 @@ API：
 - 警告次数。
 - 违规次数。
 - 获得货币。
+
+每日刷新规则：
+
+- 使用服务器本地日期，格式为 `YYYY-MM-DD`。
+- 第一次读取当天任务或统计时，如果不存在当天记录则创建默认记录。
+- 跨天不删除历史任务记录，只创建新日期记录。
+- 连续天数根据有有效专注时长的日期计算，`abandoned` 不计入连续天数。
 
 ### 8.8 验收标准
 
