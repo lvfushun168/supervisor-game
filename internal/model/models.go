@@ -153,6 +153,7 @@ type WorkSession struct {
 	PatrolCount            int        `gorm:"not null;default:0" json:"patrolCount"`
 	WarningCount           int        `gorm:"not null;default:0" json:"warningCount"`
 	ViolationCount         int        `gorm:"not null;default:0" json:"violationCount"`
+	Status                 string     `gorm:"type:varchar(32);not null;default:'working';index" json:"status"`
 	Result                 string     `gorm:"type:varchar(32);index" json:"result"`
 	FinishReason           string     `gorm:"type:varchar(32);index" json:"finishReason"`
 	EarnedCurrency         int        `gorm:"not null;default:0" json:"earnedCurrency"`

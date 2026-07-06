@@ -61,6 +61,10 @@ func (s *Server) Handler() http.Handler {
 	api.GET("/scenes", s.scenes)
 	api.GET("/settings", s.getSettings)
 	api.PUT("/settings", s.putSettings)
+	api.POST("/session/start", s.startSession)
+	api.POST("/session/pause", s.pauseSession)
+	api.POST("/session/resume", s.resumeSession)
+	api.POST("/session/finish", s.finishSession)
 
 	admin := api.Group("/admin")
 	admin.Use(s.adminAuth())

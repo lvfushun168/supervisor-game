@@ -229,8 +229,8 @@ func ValidateUserSetting(setting model.UserSetting) error {
 	if !allowed(setting.Mode, "pomodoro", "custom", "infinite") {
 		return fmt.Errorf("%w: mode must be one of pomodoro, custom, infinite", ErrInvalidInput)
 	}
-	if setting.CustomDurationSeconds <= 0 {
-		return fmt.Errorf("%w: customDurationSeconds must be greater than 0", ErrInvalidInput)
+	if setting.CustomDurationSeconds < 300 {
+		return fmt.Errorf("%w: customDurationSeconds must be at least 300", ErrInvalidInput)
 	}
 	if !allowed(setting.PatrolFrequency, "slow", "normal", "high") {
 		return fmt.Errorf("%w: patrolFrequency must be one of slow, normal, high", ErrInvalidInput)
