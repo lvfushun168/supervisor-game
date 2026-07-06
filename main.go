@@ -29,6 +29,11 @@ func main() {
 		log.Fatalf("database migration failed: %v", err)
 	}
 
+	log.Printf("environment: %s", cfg.AppEnv)
+	log.Printf("assets directory: %s", cfg.AssetsDir)
+	if db != nil {
+		log.Printf("database connected and migrated")
+	}
 	log.Printf("supervisor-game listening on %s", cfg.Addr)
 	if err := http.ListenAndServe(cfg.Addr, app.Handler()); err != nil {
 		log.Fatalf("server stopped: %v", err)

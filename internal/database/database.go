@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"supervisor-game/internal/model"
+
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
@@ -31,4 +33,28 @@ func Open(dsn string) (*gorm.DB, error) {
 	sqlDB.SetConnMaxLifetime(30 * time.Minute)
 
 	return db, nil
+}
+
+func Migrate(db *gorm.DB) error {
+	if db == nil {
+		return nil
+	}
+
+	return db.AutoMigrate(
+		&model.AppSetting{},
+		&model.Character{},
+		&model.UserSetting{},
+		&model.Scene{},
+		&model.ActionConfig{},
+		&model.ModelConfig{},
+		&model.PatrolRule{},
+		&model.MySQLConfig{},
+		&model.WorkSession{},
+		&model.PatrolRecord{},
+		&model.DailyStat{},
+		&model.Task{},
+		&model.TaskRecord{},
+		&model.Badge{},
+		&model.UserProgress{},
+	)
 }

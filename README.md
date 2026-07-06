@@ -16,6 +16,14 @@ docker compose up -d mysql
 go run .
 ```
 
+首次启动前需要准备 MySQL 8.0 并创建目标库：
+
+```sql
+CREATE DATABASE supervisor_game CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+服务启动后会自动执行 GORM AutoMigrate，并幂等写入 M1 默认数据：默认角色、`study_room` 场景、动作配置、巡查规则、等级配置、任务和用户进度。
+
 前端开发模式：
 
 ```bash
@@ -38,4 +46,10 @@ make build
 ## 常用接口
 
 - `GET /api/health`
+- `GET /api/runtime/config`
+- `GET /api/scenes`
+- `GET /api/settings`
+- `PUT /api/settings`
 - `GET /api/admin/status`
+
+`/api/runtime/config`、`/api/scenes` 和 `/api/settings` 不返回模型 API Key、数据库密码或 appkey。

@@ -11,20 +11,27 @@ import (
 
 	"supervisor-game/internal/config"
 	"supervisor-game/internal/database"
-	"supervisor-game/internal/model"
+	"supervisor-game/internal/repository"
+	"supervisor-game/internal/service"
 )
 
 type Server struct {
 	cfg     config.Config
 	db      *gorm.DB
+	svc     *service.Service
 	distFS  fs.FS
 	dbError error
 }
 
 func New(cfg config.Config, db *gorm.DB, dbError error, distFS fs.FS) *Server {
+	var svc *service.Service
+	if db != nil {
+		svc = service.New(cfg, repository.New(db))
+	}
 	return &Server{
 		cfg:     cfg,
 		db:      db,
+		svc:     svc,
 		distFS:  distFS,
 		dbError: dbError,
 	}
@@ -40,8 +47,13 @@ func (s *Server) Handler() http.Handler {
 
 	api := router.Group("/api")
 	api.GET("/health", s.health)
+	api.GET("/runtime/config", s.runtimeConfig)
+	api.GET("/scenes", s.scenes)
+	api.GET("/settings", s.getSettings)
+	api.PUT("/settings", s.putSettings)
 	api.GET("/admin/status", s.adminStatus)
 
+	router.Static("/assets", s.cfg.AssetsDir)
 	s.mountFrontend(router)
 
 	return router
@@ -51,7 +63,10 @@ func (s *Server) Migrate() error {
 	if s.db == nil {
 		return nil
 	}
-	return s.db.AutoMigrate(&model.Setting{})
+	if err := database.Migrate(s.db); err != nil {
+		return err
+	}
+	return s.svc.SeedDefaults()
 }
 
 func (s *Server) health(c *gin.Context) {
@@ -67,6 +82,64 @@ func (s *Server) adminStatus(c *gin.Context) {
 		"service":  "supervisor-game",
 		"database": s.databaseStatus(),
 	})
+}
+
+func (s *Server) runtimeConfig(c *gin.Context) {
+	if s.svc == nil {
+		s.writeError(c, service.ErrDatabaseUnavailable)
+		return
+	}
+	runtimeConfig, err := s.svc.RuntimeConfig()
+	if err != nil {
+		s.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, runtimeConfig)
+}
+
+func (s *Server) scenes(c *gin.Context) {
+	if s.svc == nil {
+		s.writeError(c, service.ErrDatabaseUnavailable)
+		return
+	}
+	scenes, err := s.svc.EnabledScenes()
+	if err != nil {
+		s.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": scenes})
+}
+
+func (s *Server) getSettings(c *gin.Context) {
+	if s.svc == nil {
+		s.writeError(c, service.ErrDatabaseUnavailable)
+		return
+	}
+	setting, err := s.svc.UserSetting()
+	if err != nil {
+		s.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, setting)
+}
+
+func (s *Server) putSettings(c *gin.Context) {
+	if s.svc == nil {
+		s.writeError(c, service.ErrDatabaseUnavailable)
+		return
+	}
+	var input service.UserSettingInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		s.writeAPIError(c, http.StatusBadRequest, "INVALID_JSON", "请求 JSON 格式不正确。")
+		return
+	}
+
+	setting, err := s.svc.UpdateUserSetting(input)
+	if err != nil {
+		s.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, setting)
 }
 
 func (s *Server) databaseStatus() gin.H {
@@ -88,6 +161,28 @@ func (s *Server) databaseStatus() gin.H {
 	}
 
 	return gin.H{"status": "connected"}
+}
+
+func (s *Server) writeError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, service.ErrDatabaseUnavailable):
+		s.writeAPIError(c, http.StatusServiceUnavailable, "DATABASE_UNAVAILABLE", "数据库暂不可用，请检查 DB_DSN。")
+	case errors.Is(err, service.ErrInvalidInput):
+		s.writeAPIError(c, http.StatusBadRequest, "VALIDATION_FAILED", err.Error())
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		s.writeAPIError(c, http.StatusNotFound, "NOT_FOUND", "请求的数据不存在。")
+	default:
+		s.writeAPIError(c, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+	}
+}
+
+func (s *Server) writeAPIError(c *gin.Context, status int, code string, message string) {
+	c.JSON(status, gin.H{
+		"error": gin.H{
+			"code":    code,
+			"message": message,
+		},
+	})
 }
 
 func (s *Server) mountFrontend(router *gin.Engine) {
