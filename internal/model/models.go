@@ -15,7 +15,7 @@ type Character struct {
 	ID              uint      `gorm:"primaryKey" json:"id"`
 	CharacterKey    string    `gorm:"type:varchar(128);uniqueIndex;not null" json:"characterKey"`
 	Name            string    `gorm:"type:varchar(128);not null" json:"name"`
-	Enabled         bool      `gorm:"not null;default:true" json:"enabled"`
+	Enabled         bool      `gorm:"not null" json:"enabled"`
 	Description     string    `gorm:"type:text" json:"description"`
 	AvatarURL       string    `gorm:"type:varchar(512)" json:"avatarUrl"`
 	ProfileJSON     string    `gorm:"type:text;not null" json:"profileJson"`
@@ -48,7 +48,7 @@ type Scene struct {
 	ID                       uint      `gorm:"primaryKey" json:"id"`
 	SceneKey                 string    `gorm:"type:varchar(128);uniqueIndex;not null" json:"sceneKey"`
 	Name                     string    `gorm:"type:varchar(128);not null" json:"name"`
-	Enabled                  bool      `gorm:"not null;default:true;index" json:"enabled"`
+	Enabled                  bool      `gorm:"not null;index" json:"enabled"`
 	Description              string    `gorm:"type:text" json:"description"`
 	BackgroundType           string    `gorm:"type:varchar(32);not null" json:"backgroundType"`
 	BackgroundURL            string    `gorm:"type:varchar(512)" json:"backgroundUrl"`
@@ -68,7 +68,7 @@ type ActionConfig struct {
 	SceneKey           string    `gorm:"type:varchar(128);uniqueIndex:idx_scene_action;not null;index" json:"sceneKey"`
 	ActionKey          string    `gorm:"type:varchar(128);uniqueIndex:idx_scene_action;not null" json:"actionKey"`
 	Name               string    `gorm:"type:varchar(128);not null" json:"name"`
-	Enabled            bool      `gorm:"not null;default:true;index" json:"enabled"`
+	Enabled            bool      `gorm:"not null;index" json:"enabled"`
 	Priority           int       `gorm:"not null;default:0" json:"priority"`
 	VideoURL           string    `gorm:"type:varchar(512);not null" json:"videoUrl"`
 	PosterURL          string    `gorm:"type:varchar(512)" json:"posterUrl"`
@@ -130,7 +130,7 @@ type MySQLConfig struct {
 	Timezone          string     `gorm:"type:varchar(64);not null" json:"timezone"`
 	MaxOpenConns      int        `gorm:"not null" json:"maxOpenConns"`
 	MaxIdleConns      int        `gorm:"not null" json:"maxIdleConns"`
-	Enabled           bool       `gorm:"not null;default:false;index" json:"enabled"`
+	Enabled           bool       `gorm:"not null;index" json:"enabled"`
 	LastTestedAt      *time.Time `json:"lastTestedAt"`
 	LastTestResult    string     `gorm:"type:varchar(32)" json:"lastTestResult"`
 	LastTestError     string     `gorm:"type:text" json:"lastTestError"`
@@ -198,7 +198,7 @@ type Task struct {
 	TaskType       string    `gorm:"type:varchar(64);not null" json:"taskType"`
 	TargetValue    int       `gorm:"not null" json:"targetValue"`
 	RewardCurrency int       `gorm:"not null" json:"rewardCurrency"`
-	Enabled        bool      `gorm:"not null;default:true;index" json:"enabled"`
+	Enabled        bool      `gorm:"not null;index" json:"enabled"`
 	SortOrder      int       `gorm:"not null;default:0" json:"sortOrder"`
 	MetadataJSON   string    `gorm:"type:text;not null" json:"metadataJson"`
 	CreatedAt      time.Time `json:"createdAt"`
@@ -221,8 +221,8 @@ type Badge struct {
 	BadgeKey     string     `gorm:"type:varchar(128);uniqueIndex;not null" json:"badgeKey"`
 	Name         string     `gorm:"type:varchar(128);not null" json:"name"`
 	Description  string     `gorm:"type:text" json:"description"`
-	Enabled      bool       `gorm:"not null;default:true;index" json:"enabled"`
-	Unlocked     bool       `gorm:"not null;default:false;index" json:"unlocked"`
+	Enabled      bool       `gorm:"not null;index" json:"enabled"`
+	Unlocked     bool       `gorm:"not null;index" json:"unlocked"`
 	UnlockedAt   *time.Time `json:"unlockedAt"`
 	MetadataJSON string     `gorm:"type:text;not null" json:"metadataJson"`
 	CreatedAt    time.Time  `json:"createdAt"`

@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -16,24 +17,33 @@ import (
 )
 
 type Server struct {
-	cfg     config.Config
-	db      *gorm.DB
-	svc     *service.Service
-	distFS  fs.FS
-	dbError error
+	cfg        config.Config
+	db         *gorm.DB
+	svc        *service.Service
+	distFS     fs.FS
+	dbError    error
+	dbSource   string
+	dbMigrated bool
+	startedAt  time.Time
 }
 
-func New(cfg config.Config, db *gorm.DB, dbError error, distFS fs.FS) *Server {
+func New(cfg config.Config, db *gorm.DB, dbError error, dbSource string, dbMigrated bool, distFS fs.FS) *Server {
 	var svc *service.Service
 	if db != nil {
 		svc = service.New(cfg, repository.New(db))
 	}
+	if dbSource == "" {
+		dbSource = "DB_DSN"
+	}
 	return &Server{
-		cfg:     cfg,
-		db:      db,
-		svc:     svc,
-		distFS:  distFS,
-		dbError: dbError,
+		cfg:        cfg,
+		db:         db,
+		svc:        svc,
+		distFS:     distFS,
+		dbError:    dbError,
+		dbSource:   dbSource,
+		dbMigrated: dbMigrated,
+		startedAt:  time.Now(),
 	}
 }
 
@@ -51,7 +61,33 @@ func (s *Server) Handler() http.Handler {
 	api.GET("/scenes", s.scenes)
 	api.GET("/settings", s.getSettings)
 	api.PUT("/settings", s.putSettings)
-	api.GET("/admin/status", s.adminStatus)
+
+	admin := api.Group("/admin")
+	admin.Use(s.adminAuth())
+	admin.Use(s.requireService())
+	admin.GET("/status", s.adminStatus)
+	admin.GET("/runtime-config", s.adminRuntimeConfig)
+	admin.GET("/characters", s.adminCharacters)
+	admin.POST("/characters", s.createCharacter)
+	admin.PUT("/characters/:id", s.updateCharacter)
+	admin.DELETE("/characters/:id", s.deleteCharacter)
+	admin.GET("/scenes", s.adminScenes)
+	admin.POST("/scenes", s.createScene)
+	admin.PUT("/scenes/:id", s.updateScene)
+	admin.DELETE("/scenes/:id", s.deleteScene)
+	admin.GET("/actions", s.adminActions)
+	admin.POST("/actions", s.createAction)
+	admin.PUT("/actions/:id", s.updateAction)
+	admin.DELETE("/actions/:id", s.deleteAction)
+	admin.GET("/model-config", s.adminModelConfig)
+	admin.PUT("/model-config", s.updateModelConfig)
+	admin.POST("/model-config/test", s.testModelConfig)
+	admin.GET("/patrol-rule", s.adminPatrolRule)
+	admin.PUT("/patrol-rule", s.updatePatrolRule)
+	admin.GET("/mysql-config", s.adminMySQLConfig)
+	admin.PUT("/mysql-config", s.updateMySQLConfig)
+	admin.POST("/mysql-config/test", s.testMySQLConfig)
+	admin.POST("/mysql-config/migrate", s.migrateMySQLConfig)
 
 	router.Static("/assets", s.cfg.AssetsDir)
 	s.mountFrontend(router)
@@ -63,8 +99,11 @@ func (s *Server) Migrate() error {
 	if s.db == nil {
 		return nil
 	}
-	if err := database.Migrate(s.db); err != nil {
-		return err
+	if !s.dbMigrated {
+		if err := database.Migrate(s.db); err != nil {
+			return err
+		}
+		s.dbMigrated = true
 	}
 	return s.svc.SeedDefaults()
 }
@@ -78,10 +117,16 @@ func (s *Server) health(c *gin.Context) {
 }
 
 func (s *Server) adminStatus(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"service":  "supervisor-game",
-		"database": s.databaseStatus(),
-	})
+	if s.svc == nil {
+		c.JSON(http.StatusOK, gin.H{"service": "supervisor-game", "database": s.databaseStatus()})
+		return
+	}
+	status, err := s.svc.AdminStatus(s.adminStatusInput())
+	if err != nil {
+		s.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, status)
 }
 
 func (s *Server) runtimeConfig(c *gin.Context) {
@@ -161,6 +206,22 @@ func (s *Server) databaseStatus() gin.H {
 	}
 
 	return gin.H{"status": "connected"}
+}
+
+func (s *Server) adminStatusInput() service.AdminStatusInput {
+	message := ""
+	if s.dbError != nil {
+		message = s.dbError.Error()
+	}
+	return service.AdminStatusInput{
+		StartedAt:    s.startedAt,
+		Addr:         s.cfg.Addr,
+		AssetsDir:    s.cfg.AssetsDir,
+		DBStatus:     s.databaseStatus(),
+		DBSource:     s.dbSource,
+		DBError:      message,
+		BootstrapDSN: s.cfg.DBDSN != "",
+	}
 }
 
 func (s *Server) writeError(c *gin.Context, err error) {
