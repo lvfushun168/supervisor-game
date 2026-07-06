@@ -93,6 +93,7 @@ func (s *Server) Handler() http.Handler {
 	admin.PUT("/mysql-config", s.updateMySQLConfig)
 	admin.POST("/mysql-config/test", s.testMySQLConfig)
 	admin.POST("/mysql-config/migrate", s.migrateMySQLConfig)
+	admin.POST("/assets/upload", s.uploadAdminAsset)
 
 	router.Static("/assets", s.cfg.AssetsDir)
 	s.mountFrontend(router)

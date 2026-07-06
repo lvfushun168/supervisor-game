@@ -361,6 +361,20 @@ button.active {
   background: #171c22;
 }
 
+.admin-login-panel {
+  margin-top: 16px;
+  min-height: 160px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+
+.admin-login-panel h2 {
+  color: #d6dde7;
+  font-size: 18px;
+  font-weight: 700;
+}
+
 .split-panel {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(360px, 0.8fr);
@@ -417,8 +431,67 @@ label.check {
   color: #ecf1f7;
 }
 
+.asset-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 180px;
+  gap: 8px;
+  align-items: center;
+}
+
+.asset-picker input[readonly] {
+  color: #d6dde7;
+}
+
+.asset-picker input[type="file"] {
+  min-width: 0;
+  padding: 7px;
+}
+
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(0, 0, 0, 0.56);
+}
+
+.drawer-panel {
+  width: min(560px, 100vw);
+  height: 100vh;
+  overflow: auto;
+  padding: 20px;
+  color: #ecf1f7;
+  border-left: 1px solid rgba(255, 255, 255, 0.14);
+  background: #171c22;
+  box-shadow: -18px 0 40px rgba(0, 0, 0, 0.36);
+}
+
+.readonly-field {
+  display: grid;
+  gap: 5px;
+}
+
+.readonly-field span {
+  color: #9aa7b6;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.readonly-field strong {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 9px 10px;
+  color: #f5f7fb;
+  background: rgba(15, 19, 24, 0.78);
+}
+
 input,
-textarea {
+textarea,
+select {
   width: 100%;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 8px;
@@ -487,6 +560,10 @@ pre {
 
   .appkey-box {
     align-items: stretch;
+  }
+
+  .asset-picker {
+    grid-template-columns: 1fr;
   }
 
   .stage {

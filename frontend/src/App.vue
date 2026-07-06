@@ -5,6 +5,7 @@ type AnyRecord = Record<string, any>
 
 const isAdmin = window.location.pathname === '/__admin'
 const adminKey = ref(new URLSearchParams(window.location.search).get('appkey') || localStorage.getItem('adminAppKey') || '')
+const adminUnlocked = ref(false)
 const activeTab = ref('status')
 const loading = ref(false)
 const message = ref('')
@@ -92,12 +93,24 @@ const routeName = computed(() => {
 const tabs = [
   ['status', '运行状态'],
   ['runtime', '运行时预览'],
-  ['characters', '角色'],
+  ['characters', '督学员'],
   ['scenes', '场景'],
-  ['actions', '动作'],
+  ['actions', '事件视频'],
   ['model', '大模型'],
   ['patrol', '巡查规则'],
   ['mysql', 'MySQL'],
+]
+
+const actionEvents = [
+  { key: 'patrol_enter', label: '巡查入场', statuses: [] },
+  { key: 'patrol_normal', label: '正常巡查', statuses: ['normal'] },
+  { key: 'patrol_suspicious', label: '可疑提醒', statuses: ['suspicious', 'uncertain'] },
+  { key: 'patrol_violation', label: '违规训诫', statuses: ['violation'] },
+  { key: 'patrol_phone', label: '玩手机违规', statuses: ['using_phone'] },
+  { key: 'patrol_sleeping', label: '睡觉违规', statuses: ['sleeping'] },
+  { key: 'patrol_absent', label: '离席违规', statuses: ['absent'] },
+  { key: 'finish_success', label: '成功结算', statuses: ['success'] },
+  { key: 'fail', label: '失败结算', statuses: ['failed'] },
 ]
 
 const state = reactive<AnyRecord>({
@@ -112,6 +125,9 @@ const state = reactive<AnyRecord>({
   selectedCharacter: null,
   selectedScene: null,
   selectedAction: null,
+  characterDrawerOpen: false,
+  sceneDrawerOpen: false,
+  actionDrawerOpen: false,
   modelInput: {},
   mysqlInput: {},
 })
@@ -120,11 +136,11 @@ const adminHeaders = computed(() => ({
   'Content-Type': 'application/json',
   'X-App-Key': adminKey.value,
 }))
+const adminSceneOptions = computed(() => state.scenes || [])
 
 onMounted(() => {
   if (isAdmin && adminKey.value) {
-    localStorage.setItem('adminAppKey', adminKey.value)
-    void loadAll()
+    void activateAdmin()
   } else if (!isAdmin) {
     window.addEventListener('popstate', syncRoute)
     window.addEventListener('beforeunload', finishOnUnload)
@@ -167,6 +183,59 @@ async function run(task: () => Promise<void>, ok = '已保存') {
   } finally {
     loading.value = false
   }
+}
+
+async function uploadAsset(event: Event, target: AnyRecord, field: string, folder: string) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  loading.value = true
+  error.value = ''
+  message.value = ''
+  try {
+    const form = new FormData()
+    form.append('file', file)
+    form.append('folder', folder)
+    const response = await fetch('/api/admin/assets/upload', {
+      method: 'POST',
+      headers: { 'X-App-Key': adminKey.value },
+      body: form,
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error(data?.error?.message || data?.error?.code || '上传失败')
+    }
+    target[field] = data.path
+    if (field === 'videoUrl') {
+      const durationMs = await readVideoDurationMs(file)
+      if (durationMs > 0) target.durationMs = durationMs
+    }
+    message.value = '素材已上传'
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    input.value = ''
+    loading.value = false
+  }
+}
+
+function readVideoDurationMs(file: File): Promise<number> {
+  if (!file.type.startsWith('video/')) return Promise.resolve(0)
+  return new Promise((resolve) => {
+    const video = document.createElement('video')
+    const url = URL.createObjectURL(file)
+    video.preload = 'metadata'
+    video.onloadedmetadata = () => {
+      const seconds = Number.isFinite(video.duration) ? video.duration : 0
+      URL.revokeObjectURL(url)
+      resolve(Math.max(0, Math.round(seconds * 1000)))
+    }
+    video.onerror = () => {
+      URL.revokeObjectURL(url)
+      resolve(0)
+    }
+    video.src = url
+  })
 }
 
 async function userRun(task: () => Promise<void>, ok = '') {
@@ -564,7 +633,11 @@ function formatSeconds(total: number) {
 }
 
 async function loadAll() {
-  await run(async () => {
+  loading.value = true
+  error.value = ''
+  message.value = ''
+  adminUnlocked.value = false
+  try {
     await Promise.all([
       loadStatus(),
       loadRuntime(),
@@ -575,7 +648,15 @@ async function loadAll() {
       loadPatrol(),
       loadMySQL(),
     ])
-  }, '已加载')
+    adminUnlocked.value = true
+    localStorage.setItem('adminAppKey', adminKey.value)
+    message.value = '已进入维护后台'
+  } catch (err) {
+    localStorage.removeItem('adminAppKey')
+    error.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    loading.value = false
+  }
 }
 
 async function loadStatus() {
@@ -589,19 +670,19 @@ async function loadRuntime() {
 async function loadCharacters() {
   const data = await api('/api/admin/characters')
   state.characters = data.items || []
-  if (!state.selectedCharacter) state.selectedCharacter = emptyCharacter()
+  if (!state.selectedCharacter) state.selectedCharacter = state.characters[0] ? { ...state.characters[0] } : emptyCharacter()
 }
 
 async function loadScenes() {
   const data = await api('/api/admin/scenes')
   state.scenes = data.items || []
-  if (!state.selectedScene) state.selectedScene = emptyScene()
+  if (!state.selectedScene) state.selectedScene = state.scenes[0] ? { ...state.scenes[0] } : emptyScene()
 }
 
 async function loadActions() {
   const data = await api('/api/admin/actions')
   state.actions = data.items || []
-  if (!state.selectedAction) state.selectedAction = emptyAction()
+  if (!state.selectedAction) state.selectedAction = state.actions[0] ? { ...state.actions[0] } : emptyAction()
 }
 
 async function loadModel() {
@@ -619,36 +700,64 @@ async function loadMySQL() {
 }
 
 function activateAdmin() {
-  localStorage.setItem('adminAppKey', adminKey.value)
+  if (!adminKey.value.trim()) {
+    error.value = '请输入 appkey。'
+    message.value = ''
+    adminUnlocked.value = false
+    return
+  }
+  adminKey.value = adminKey.value.trim()
+  adminUnlocked.value = false
   void loadAll()
 }
 
 function selectCharacter(item: AnyRecord) {
   state.selectedCharacter = { ...item }
+  state.characterDrawerOpen = true
 }
 
-function newCharacter(base?: AnyRecord) {
-  state.selectedCharacter = base ? { ...base, id: 0, characterKey: `${base.characterKey}_copy` } : emptyCharacter()
+function closeCharacterDrawer() {
+  state.characterDrawerOpen = false
 }
 
 function selectScene(item: AnyRecord) {
   state.selectedScene = { ...item }
+  state.sceneDrawerOpen = true
 }
 
 function newScene(base?: AnyRecord) {
-  state.selectedScene = base ? { ...base, id: 0, sceneKey: `${base.sceneKey}_copy`, enabled: false } : emptyScene()
+  state.selectedScene = base
+    ? { ...base, id: 0, sceneKey: makeKey('scene'), name: `${base.name || '场景'} 副本`, enabled: false }
+    : emptyScene()
+  state.sceneDrawerOpen = true
+}
+
+function closeSceneDrawer() {
+  state.sceneDrawerOpen = false
 }
 
 function selectAction(item: AnyRecord) {
   state.selectedAction = { ...item }
+  state.actionDrawerOpen = true
 }
 
 function newAction(base?: AnyRecord) {
-  state.selectedAction = base ? { ...base, id: 0, actionKey: `${base.actionKey}_copy`, enabled: false } : emptyAction()
+  const sceneKey = state.selectedScene?.sceneKey || state.scenes[0]?.sceneKey || 'study_room'
+  state.selectedAction = base ? { ...base, id: 0, enabled: false } : emptyAction(sceneKey)
+  state.actionDrawerOpen = true
+}
+
+function closeActionDrawer() {
+  state.actionDrawerOpen = false
 }
 
 async function saveCharacter() {
   await run(async () => {
+    state.selectedCharacter.profileJson = JSON.stringify({
+      title: state.selectedCharacter.name || '督学员',
+      summary: state.selectedCharacter.description || '',
+      voiceStyle: state.selectedCharacter.voiceStyle || '',
+    })
     ensureJSON(state.selectedCharacter.profileJson, '角色档案 JSON')
     ensureJSON(state.selectedCharacter.metadataJson, 'metadata JSON')
     const body = JSON.stringify(state.selectedCharacter)
@@ -659,19 +768,13 @@ async function saveCharacter() {
     }
     await loadCharacters()
     await loadRuntime()
+    closeCharacterDrawer()
   })
-}
-
-async function deleteCharacter(id: number) {
-  await run(async () => {
-    await api(`/api/admin/characters/${id}`, { method: 'DELETE' })
-    state.selectedCharacter = emptyCharacter()
-    await loadCharacters()
-  }, '已删除')
 }
 
 async function saveScene() {
   await run(async () => {
+    prepareSceneInput()
     ensureJSON(state.selectedScene.availableActionKeysJson, '可用动作 JSON')
     ensureJSON(state.selectedScene.modelResultActionMapJson, '结果映射 JSON')
     ensureJSON(state.selectedScene.metadataJson, 'metadata JSON')
@@ -683,6 +786,7 @@ async function saveScene() {
     }
     await loadScenes()
     await loadRuntime()
+    closeSceneDrawer()
   })
 }
 
@@ -691,11 +795,13 @@ async function deleteScene(id: number) {
     await api(`/api/admin/scenes/${id}`, { method: 'DELETE' })
     state.selectedScene = emptyScene()
     await loadScenes()
+    closeSceneDrawer()
   }, '已删除')
 }
 
 async function saveAction() {
   await run(async () => {
+    prepareActionInput()
     ensureJSON(state.selectedAction.modelResultMapJson, '模型映射 JSON')
     ensureJSON(state.selectedAction.localRuleMapJson, '本地规则 JSON')
     ensureJSON(state.selectedAction.metadataJson, 'metadata JSON')
@@ -705,8 +811,10 @@ async function saveAction() {
     } else {
       await api('/api/admin/actions', { method: 'POST', body })
     }
+    await bindActionToScene(state.selectedAction)
     await loadActions()
     await loadScenes()
+    closeActionDrawer()
   })
 }
 
@@ -779,10 +887,101 @@ function ensureJSON(value: string, label: string) {
   return label
 }
 
+function makeKey(prefix: string) {
+  return `${prefix}_${Date.now().toString(36)}`
+}
+
+function actionEventLabel(actionKey: string) {
+  return actionEvents.find((event) => event.key === actionKey)?.label || actionKey || '未选择'
+}
+
+function actionSceneName(sceneKey: string) {
+  return state.scenes.find((scene: AnyRecord) => scene.sceneKey === sceneKey)?.name || sceneKey
+}
+
+function prepareSceneInput() {
+  if (!state.selectedScene.sceneKey) state.selectedScene.sceneKey = makeKey('scene')
+  if (!state.selectedScene.name) state.selectedScene.name = '未命名场景'
+  state.selectedScene.backgroundType = state.selectedScene.backgroundVideoUrl ? 'video' : 'image'
+  if (!state.selectedScene.backgroundPosterUrl) state.selectedScene.backgroundPosterUrl = state.selectedScene.backgroundUrl
+  state.selectedScene.availableActionKeysJson ||= '[]'
+  state.selectedScene.modelResultActionMapJson ||= '{}'
+  state.selectedScene.metadataJson ||= '{}'
+}
+
+function prepareActionInput() {
+  if (!state.selectedAction.sceneKey) state.selectedAction.sceneKey = state.selectedScene?.sceneKey || state.scenes[0]?.sceneKey || 'study_room'
+  if (!state.selectedAction.actionKey) state.selectedAction.actionKey = actionEvents[0].key
+  state.selectedAction.name = actionEventLabel(state.selectedAction.actionKey)
+  if (!state.selectedAction.durationMs) state.selectedAction.durationMs = 8000
+  state.selectedAction.posterUrl ||= state.scenes.find((scene: AnyRecord) => scene.sceneKey === state.selectedAction.sceneKey)?.backgroundUrl || ''
+  state.selectedAction.modelResultMapJson ||= '{}'
+  state.selectedAction.localRuleMapJson ||= '{}'
+  state.selectedAction.metadataJson ||= '{}'
+}
+
+function updateActionVideoDuration(event: Event) {
+  const video = event.target as HTMLVideoElement
+  if (!Number.isFinite(video.duration) || video.duration <= 0 || !state.selectedAction) return
+  state.selectedAction.durationMs = Math.round(video.duration * 1000)
+}
+
+function formatDurationMs(value: number) {
+  if (!value) return '等待视频加载'
+  const seconds = Math.round(value / 1000)
+  const minutes = Math.floor(seconds / 60)
+  const rest = seconds % 60
+  return `${minutes}:${String(rest).padStart(2, '0')}`
+}
+
+async function bindActionToScene(action: AnyRecord) {
+  const scene = state.scenes.find((item: AnyRecord) => item.sceneKey === action.sceneKey)
+  if (!scene) return
+
+  const available = parseArrayJSON(scene.availableActionKeysJson)
+  if (!available.includes(action.actionKey)) available.push(action.actionKey)
+
+  const mapping = parseObjectJSON(scene.modelResultActionMapJson)
+  const event = actionEvents.find((item) => item.key === action.actionKey)
+  for (const status of event?.statuses || []) {
+    mapping[status] = action.actionKey
+  }
+  if (!scene.defaultActionKey && action.actionKey === 'patrol_normal') {
+    scene.defaultActionKey = action.actionKey
+  }
+
+  await api(`/api/admin/scenes/${scene.id}`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      ...scene,
+      availableActionKeysJson: JSON.stringify(available),
+      modelResultActionMapJson: JSON.stringify(mapping),
+    }),
+  })
+}
+
+function parseArrayJSON(value: string) {
+  try {
+    const parsed = JSON.parse(value || '[]')
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function parseObjectJSON(value: string) {
+  try {
+    const parsed = JSON.parse(value || '{}')
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
 function emptyCharacter() {
   return {
     id: 0,
-    characterKey: '',
+    characterKey: makeKey('oc'),
     name: '',
     enabled: false,
     description: '',
@@ -797,7 +996,7 @@ function emptyCharacter() {
 function emptyScene() {
   return {
     id: 0,
-    sceneKey: '',
+    sceneKey: makeKey('scene'),
     name: '',
     enabled: false,
     description: '',
@@ -813,12 +1012,13 @@ function emptyScene() {
   }
 }
 
-function emptyAction() {
+function emptyAction(sceneKey = 'study_room') {
+  const event = actionEvents[1]
   return {
     id: 0,
-    sceneKey: 'study_room',
-    actionKey: '',
-    name: '',
+    sceneKey,
+    actionKey: event.key,
+    name: event.label,
     enabled: false,
     priority: 0,
     videoUrl: '',
@@ -982,16 +1182,24 @@ function emptyAction() {
   <main v-else class="admin-shell">
     <header class="admin-topbar">
       <div>
-        <p class="eyebrow">Hidden Admin</p>
-        <h1>管理端配置闭环</h1>
+        <p class="eyebrow">本地管理</p>
+        <h1>维护后台</h1>
       </div>
-      <div class="appkey-box">
+      <form class="appkey-box" @submit.prevent="activateAdmin">
         <input v-model="adminKey" type="password" placeholder="APP_KEY" />
-        <button type="button" @click="activateAdmin">进入</button>
-      </div>
+        <button type="submit">进入</button>
+      </form>
     </header>
 
-    <nav class="admin-tabs" aria-label="管理端标签">
+    <p v-if="loading" class="notice">处理中...</p>
+    <p v-if="message" class="notice success">{{ message }}</p>
+    <p v-if="error" class="notice danger">{{ error }}</p>
+
+    <section v-if="!adminUnlocked" class="admin-panel admin-login-panel">
+      <h2>请输入 appkey 后进入维护后台</h2>
+    </section>
+
+    <nav v-if="adminUnlocked" class="admin-tabs" aria-label="管理端标签">
       <button
         v-for="[key, label] in tabs"
         :key="key"
@@ -1003,11 +1211,7 @@ function emptyAction() {
       </button>
     </nav>
 
-    <p v-if="loading" class="notice">处理中...</p>
-    <p v-if="message" class="notice success">{{ message }}</p>
-    <p v-if="error" class="notice danger">{{ error }}</p>
-
-    <section v-if="activeTab === 'status'" class="admin-panel">
+    <section v-if="adminUnlocked && activeTab === 'status'" class="admin-panel">
       <div class="panel-title">
         <h2>运行状态</h2>
         <button type="button" @click="loadStatus">刷新</button>
@@ -1015,7 +1219,7 @@ function emptyAction() {
       <pre>{{ JSON.stringify(state.status, null, 2) }}</pre>
     </section>
 
-    <section v-if="activeTab === 'runtime'" class="admin-panel">
+    <section v-if="adminUnlocked && activeTab === 'runtime'" class="admin-panel">
       <div class="panel-title">
         <h2>运行时配置预览</h2>
         <button type="button" @click="loadRuntime">刷新</button>
@@ -1023,124 +1227,189 @@ function emptyAction() {
       <pre>{{ JSON.stringify(state.runtime, null, 2) }}</pre>
     </section>
 
-    <section v-if="activeTab === 'characters'" class="admin-panel split-panel">
-      <div>
-        <div class="panel-title">
-          <h2>角色配置</h2>
-          <button type="button" @click="newCharacter()">新增</button>
-        </div>
-        <table>
-          <thead><tr><th>Key</th><th>名称</th><th>启用</th><th></th></tr></thead>
-          <tbody>
-            <tr v-for="item in state.characters" :key="item.id">
-              <td>{{ item.characterKey }}</td>
-              <td>{{ item.name }}</td>
-              <td>{{ item.enabled ? '是' : '否' }}</td>
-              <td class="row-actions">
-                <button type="button" @click="selectCharacter(item)">编辑</button>
-                <button type="button" @click="newCharacter(item)">复制</button>
-                <button type="button" class="danger-btn" @click="deleteCharacter(item.id)">删除</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+    <section v-if="adminUnlocked && activeTab === 'characters'" class="admin-panel">
+      <div class="panel-title">
+        <h2>督学员档案</h2>
       </div>
-      <form class="edit-form" @submit.prevent="saveCharacter">
-        <label>characterKey<input v-model="state.selectedCharacter.characterKey" /></label>
-        <label>名称<input v-model="state.selectedCharacter.name" /></label>
-        <label class="check"><input v-model="state.selectedCharacter.enabled" type="checkbox" /> 启用</label>
-        <label>头像路径<input v-model="state.selectedCharacter.avatarUrl" /></label>
-        <label>默认场景<input v-model="state.selectedCharacter.defaultSceneKey" /></label>
-        <label>语音风格<input v-model="state.selectedCharacter.voiceStyle" /></label>
-        <label>描述<textarea v-model="state.selectedCharacter.description"></textarea></label>
-        <label>角色档案 JSON<textarea v-model="state.selectedCharacter.profileJson"></textarea></label>
-        <label>metadata JSON<textarea v-model="state.selectedCharacter.metadataJson"></textarea></label>
-        <button type="submit">保存角色</button>
-      </form>
+      <table>
+        <thead><tr><th>名称</th><th>启用</th><th></th></tr></thead>
+        <tbody>
+          <tr v-for="item in state.characters" :key="item.id">
+            <td>{{ item.name }}</td>
+            <td>{{ item.enabled ? '是' : '否' }}</td>
+            <td class="row-actions">
+              <button type="button" @click="selectCharacter(item)">编辑</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </section>
 
-    <section v-if="activeTab === 'scenes'" class="admin-panel split-panel">
-      <div>
+    <div v-if="adminUnlocked && activeTab === 'characters' && state.characterDrawerOpen" class="drawer-backdrop" @click.self="closeCharacterDrawer">
+      <aside class="drawer-panel" aria-label="编辑督学员档案">
         <div class="panel-title">
-          <h2>场景配置</h2>
-          <button type="button" @click="newScene()">新增</button>
+          <h2>编辑督学员档案</h2>
+          <button type="button" class="secondary" @click="closeCharacterDrawer">关闭</button>
         </div>
-        <table>
-          <thead><tr><th>Key</th><th>名称</th><th>启用</th><th></th></tr></thead>
-          <tbody>
-            <tr v-for="item in state.scenes" :key="item.id">
-              <td>{{ item.sceneKey }}</td>
-              <td>{{ item.name }}</td>
-              <td>{{ item.enabled ? '是' : '否' }}</td>
-              <td class="row-actions">
-                <button type="button" @click="selectScene(item)">编辑</button>
-                <button type="button" @click="newScene(item)">复制</button>
-                <button type="button" class="danger-btn" @click="deleteScene(item.id)">删除</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <form class="edit-form" @submit.prevent="saveCharacter">
+          <label>督学员名称<input v-model="state.selectedCharacter.name" /></label>
+          <label class="check"><input v-model="state.selectedCharacter.enabled" type="checkbox" /> 启用</label>
+          <label>默认场景
+            <select v-model="state.selectedCharacter.defaultSceneKey">
+              <option value="">不指定</option>
+              <option v-for="scene in adminSceneOptions" :key="scene.sceneKey" :value="scene.sceneKey">{{ scene.name }}</option>
+            </select>
+          </label>
+          <label>口吻<input v-model="state.selectedCharacter.voiceStyle" /></label>
+          <label>头像
+            <div class="asset-picker">
+              <input :value="state.selectedCharacter.avatarUrl || '未上传'" readonly />
+              <input type="file" accept="image/*" @change="uploadAsset($event, state.selectedCharacter, 'avatarUrl', 'characters')" />
+            </div>
+          </label>
+          <label>档案内容<textarea v-model="state.selectedCharacter.description"></textarea></label>
+          <button type="submit">保存督学员档案</button>
+        </form>
+      </aside>
+    </div>
+
+    <section v-if="adminUnlocked && activeTab === 'scenes'" class="admin-panel">
+      <div class="panel-title">
+        <h2>场景配置</h2>
+        <button type="button" @click="newScene()">新增</button>
       </div>
-      <form class="edit-form" @submit.prevent="saveScene">
-        <label>sceneKey<input v-model="state.selectedScene.sceneKey" /></label>
-        <label>名称<input v-model="state.selectedScene.name" /></label>
-        <label class="check"><input v-model="state.selectedScene.enabled" type="checkbox" /> 启用</label>
-        <label>背景类型<input v-model="state.selectedScene.backgroundType" /></label>
-        <label>背景图片<input v-model="state.selectedScene.backgroundUrl" /></label>
-        <label>背景视频<input v-model="state.selectedScene.backgroundVideoUrl" /></label>
-        <label>poster<input v-model="state.selectedScene.backgroundPosterUrl" /></label>
-        <label>环境音<input v-model="state.selectedScene.ambientAudioUrl" /></label>
-        <label>默认动作<input v-model="state.selectedScene.defaultActionKey" /></label>
-        <label>描述<textarea v-model="state.selectedScene.description"></textarea></label>
-        <label>可用动作 JSON<textarea v-model="state.selectedScene.availableActionKeysJson"></textarea></label>
-        <label>结果映射 JSON<textarea v-model="state.selectedScene.modelResultActionMapJson"></textarea></label>
-        <label>metadata JSON<textarea v-model="state.selectedScene.metadataJson"></textarea></label>
-        <button type="submit">保存场景</button>
-      </form>
+      <table>
+        <thead><tr><th>名称</th><th>背景</th><th>启用</th><th></th></tr></thead>
+        <tbody>
+          <tr v-for="item in state.scenes" :key="item.id">
+            <td>{{ item.name }}</td>
+            <td>{{ item.backgroundVideoUrl || item.backgroundUrl || '未配置' }}</td>
+            <td>{{ item.enabled ? '是' : '否' }}</td>
+            <td class="row-actions">
+              <button type="button" @click="selectScene(item)">编辑</button>
+              <button type="button" @click="newScene(item)">复制</button>
+              <button type="button" class="danger-btn" @click="deleteScene(item.id)">删除</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </section>
 
-    <section v-if="activeTab === 'actions'" class="admin-panel split-panel">
-      <div>
+    <div v-if="adminUnlocked && activeTab === 'scenes' && state.sceneDrawerOpen" class="drawer-backdrop" @click.self="closeSceneDrawer">
+      <aside class="drawer-panel" aria-label="编辑场景">
         <div class="panel-title">
-          <h2>动作配置</h2>
-          <button type="button" @click="newAction()">新增</button>
+          <h2>{{ state.selectedScene.id ? '编辑场景' : '新增场景' }}</h2>
+          <button type="button" class="secondary" @click="closeSceneDrawer">关闭</button>
         </div>
-        <table>
-          <thead><tr><th>场景</th><th>Key</th><th>名称</th><th>启用</th><th></th></tr></thead>
-          <tbody>
-            <tr v-for="item in state.actions" :key="item.id">
-              <td>{{ item.sceneKey }}</td>
-              <td>{{ item.actionKey }}</td>
-              <td>{{ item.name }}</td>
-              <td>{{ item.enabled ? '是' : '否' }}</td>
-              <td class="row-actions">
-                <button type="button" @click="selectAction(item)">编辑</button>
-                <button type="button" @click="newAction(item)">复制</button>
-                <button type="button" class="danger-btn" @click="deleteAction(item.id)">删除</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <form class="edit-form" @submit.prevent="saveScene">
+          <label>场景名称<input v-model="state.selectedScene.name" /></label>
+          <label class="check"><input v-model="state.selectedScene.enabled" type="checkbox" /> 启用</label>
+          <label>背景图片
+            <div class="asset-picker">
+              <input :value="state.selectedScene.backgroundUrl || '未上传'" readonly />
+              <input type="file" accept="image/*" @change="uploadAsset($event, state.selectedScene, 'backgroundUrl', 'scenes')" />
+            </div>
+          </label>
+          <label>背景视频
+            <div class="asset-picker">
+              <input :value="state.selectedScene.backgroundVideoUrl || '未上传'" readonly />
+              <input type="file" accept="video/*" @change="uploadAsset($event, state.selectedScene, 'backgroundVideoUrl', 'scenes')" />
+            </div>
+          </label>
+          <label>视频封面
+            <div class="asset-picker">
+              <input :value="state.selectedScene.backgroundPosterUrl || '未上传'" readonly />
+              <input type="file" accept="image/*" @change="uploadAsset($event, state.selectedScene, 'backgroundPosterUrl', 'scenes')" />
+            </div>
+          </label>
+          <label>环境音
+            <div class="asset-picker">
+              <input :value="state.selectedScene.ambientAudioUrl || '未上传'" readonly />
+              <input type="file" accept="audio/*" @change="uploadAsset($event, state.selectedScene, 'ambientAudioUrl', 'audio')" />
+            </div>
+          </label>
+          <label>备注<textarea v-model="state.selectedScene.description"></textarea></label>
+          <button type="submit">保存场景</button>
+        </form>
+      </aside>
+    </div>
+
+    <section v-if="adminUnlocked && activeTab === 'actions'" class="admin-panel">
+      <div class="panel-title">
+        <h2>事件视频</h2>
+        <button type="button" @click="newAction()">新增</button>
       </div>
-      <form class="edit-form" @submit.prevent="saveAction">
-        <label>sceneKey<input v-model="state.selectedAction.sceneKey" /></label>
-        <label>actionKey<input v-model="state.selectedAction.actionKey" /></label>
-        <label>名称<input v-model="state.selectedAction.name" /></label>
-        <label class="check"><input v-model="state.selectedAction.enabled" type="checkbox" /> 启用</label>
-        <label>优先级<input v-model.number="state.selectedAction.priority" type="number" /></label>
-        <label>视频路径<input v-model="state.selectedAction.videoUrl" /></label>
-        <label>poster<input v-model="state.selectedAction.posterUrl" /></label>
-        <label>时长 ms<input v-model.number="state.selectedAction.durationMs" type="number" /></label>
-        <label>nextActionKey<input v-model="state.selectedAction.nextActionKey" /></label>
-        <label>模型映射 JSON<textarea v-model="state.selectedAction.modelResultMapJson"></textarea></label>
-        <label>本地规则 JSON<textarea v-model="state.selectedAction.localRuleMapJson"></textarea></label>
-        <label>metadata JSON<textarea v-model="state.selectedAction.metadataJson"></textarea></label>
-        <video v-if="state.selectedAction.videoUrl" :src="'/' + state.selectedAction.videoUrl" controls></video>
-        <button type="submit">保存动作</button>
-      </form>
+      <table>
+        <thead><tr><th>场景</th><th>事件</th><th>视频</th><th>启用</th><th></th></tr></thead>
+        <tbody>
+          <tr v-for="item in state.actions" :key="item.id">
+            <td>{{ actionSceneName(item.sceneKey) }}</td>
+            <td>{{ actionEventLabel(item.actionKey) }}</td>
+            <td>{{ item.videoUrl || '未配置' }}</td>
+            <td>{{ item.enabled ? '是' : '否' }}</td>
+            <td class="row-actions">
+              <button type="button" @click="selectAction(item)">编辑</button>
+              <button type="button" class="danger-btn" @click="deleteAction(item.id)">删除</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </section>
 
-    <section v-if="activeTab === 'model'" class="admin-panel">
+    <div v-if="adminUnlocked && activeTab === 'actions' && state.actionDrawerOpen" class="drawer-backdrop" @click.self="closeActionDrawer">
+      <aside class="drawer-panel" aria-label="编辑事件视频">
+        <div class="panel-title">
+          <h2>编辑事件视频</h2>
+          <button type="button" class="secondary" @click="closeActionDrawer">关闭</button>
+        </div>
+        <form class="edit-form" @submit.prevent="saveAction">
+          <label v-if="!state.selectedAction.id">场景
+            <select v-model="state.selectedAction.sceneKey">
+              <option v-for="scene in adminSceneOptions" :key="scene.sceneKey" :value="scene.sceneKey">{{ scene.name }}</option>
+            </select>
+          </label>
+          <div v-else class="readonly-field">
+            <span>场景</span>
+            <strong>{{ actionSceneName(state.selectedAction.sceneKey) }}</strong>
+          </div>
+          <label v-if="!state.selectedAction.id">事件
+            <select v-model="state.selectedAction.actionKey">
+              <option v-for="event in actionEvents" :key="event.key" :value="event.key">{{ event.label }}</option>
+            </select>
+          </label>
+          <div v-else class="readonly-field">
+            <span>事件</span>
+            <strong>{{ actionEventLabel(state.selectedAction.actionKey) }}</strong>
+          </div>
+          <label class="check"><input v-model="state.selectedAction.enabled" type="checkbox" /> 启用</label>
+          <label>事件视频
+            <div class="asset-picker">
+              <input :value="state.selectedAction.videoUrl || '未上传'" readonly />
+              <input type="file" accept="video/*" @change="uploadAsset($event, state.selectedAction, 'videoUrl', 'actions')" />
+            </div>
+          </label>
+          <label>封面图
+            <div class="asset-picker">
+              <input :value="state.selectedAction.posterUrl || '未上传'" readonly />
+              <input type="file" accept="image/*" @change="uploadAsset($event, state.selectedAction, 'posterUrl', 'actions')" />
+            </div>
+          </label>
+          <div class="readonly-field">
+            <span>视频时长</span>
+            <strong>{{ formatDurationMs(state.selectedAction.durationMs) }}</strong>
+          </div>
+          <video
+            v-if="state.selectedAction.videoUrl"
+            :src="'/' + state.selectedAction.videoUrl"
+            controls
+            @loadedmetadata="updateActionVideoDuration"
+          ></video>
+          <button type="submit">保存事件视频</button>
+        </form>
+      </aside>
+    </div>
+
+    <section v-if="adminUnlocked && activeTab === 'model'" class="admin-panel">
       <div class="panel-title">
         <h2>大模型配置</h2>
         <button type="button" @click="testModel">测试</button>
@@ -1162,7 +1431,7 @@ function emptyAction() {
       </form>
     </section>
 
-    <section v-if="activeTab === 'patrol'" class="admin-panel">
+    <section v-if="adminUnlocked && activeTab === 'patrol'" class="admin-panel">
       <div class="panel-title"><h2>巡查规则</h2></div>
       <form v-if="state.patrol" class="edit-form wide-form" @submit.prevent="savePatrol">
         <label>慢速最小秒<input v-model.number="state.patrol.slowMinSeconds" type="number" /></label>
@@ -1183,7 +1452,7 @@ function emptyAction() {
       </form>
     </section>
 
-    <section v-if="activeTab === 'mysql'" class="admin-panel">
+    <section v-if="adminUnlocked && activeTab === 'mysql'" class="admin-panel">
       <div class="panel-title">
         <h2>MySQL 连接配置</h2>
         <div class="row-actions">

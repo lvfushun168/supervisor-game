@@ -1,8 +1,15 @@
 package server
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -292,6 +299,102 @@ func (s *Server) migrateMySQLConfig(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"migrated": true})
+}
+
+func (s *Server) uploadAdminAsset(c *gin.Context) {
+	file, err := c.FormFile("file")
+	if err != nil {
+		s.writeAPIError(c, http.StatusBadRequest, "ASSET_FILE_REQUIRED", "请选择要上传的素材文件。")
+		return
+	}
+	if file.Size > 500*1024*1024 {
+		s.writeAPIError(c, http.StatusBadRequest, "ASSET_FILE_TOO_LARGE", "素材文件不能超过 500MB。")
+		return
+	}
+
+	folder, ok := adminAssetFolder(c.PostForm("folder"))
+	if !ok {
+		s.writeAPIError(c, http.StatusBadRequest, "ASSET_FOLDER_INVALID", "素材分类不正确。")
+		return
+	}
+	ext := strings.ToLower(filepath.Ext(file.Filename))
+	if !adminAssetExtAllowed(ext) {
+		s.writeAPIError(c, http.StatusBadRequest, "ASSET_TYPE_INVALID", "只支持图片、视频和音频素材。")
+		return
+	}
+
+	src, err := file.Open()
+	if err != nil {
+		s.writeAPIError(c, http.StatusBadRequest, "ASSET_OPEN_FAILED", "素材文件读取失败。")
+		return
+	}
+	defer src.Close()
+
+	dir := filepath.Join(s.cfg.AssetsDir, folder)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		s.writeAPIError(c, http.StatusInternalServerError, "ASSET_DIR_FAILED", "素材目录创建失败。")
+		return
+	}
+
+	filename := adminAssetFilename(file.Filename, ext)
+	dstPath := filepath.Join(dir, filename)
+	dst, err := os.Create(dstPath)
+	if err != nil {
+		s.writeAPIError(c, http.StatusInternalServerError, "ASSET_SAVE_FAILED", "素材文件保存失败。")
+		return
+	}
+	defer dst.Close()
+	if _, err := io.Copy(dst, src); err != nil {
+		s.writeAPIError(c, http.StatusInternalServerError, "ASSET_SAVE_FAILED", "素材文件保存失败。")
+		return
+	}
+
+	assetPath := filepath.ToSlash(filepath.Join("assets", folder, filename))
+	c.JSON(http.StatusOK, gin.H{"path": assetPath})
+}
+
+func adminAssetFolder(value string) (string, bool) {
+	switch value {
+	case "characters":
+		return "characters", true
+	case "scenes":
+		return "scenes", true
+	case "actions":
+		return "actions", true
+	case "audio":
+		return "audio", true
+	default:
+		return "", false
+	}
+}
+
+func adminAssetExtAllowed(ext string) bool {
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4", ".webm", ".mov", ".mp3", ".wav", ".ogg":
+		return true
+	default:
+		return false
+	}
+}
+
+func adminAssetFilename(original string, ext string) string {
+	stem := strings.TrimSuffix(filepath.Base(original), filepath.Ext(original))
+	stem = strings.ToLower(stem)
+	stem = strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			return r
+		}
+		return '_'
+	}, stem)
+	stem = strings.Trim(stem, "_")
+	if stem == "" {
+		stem = "asset"
+	}
+	token := make([]byte, 4)
+	if _, err := rand.Read(token); err != nil {
+		return fmt.Sprintf("%s%s", stem, ext)
+	}
+	return fmt.Sprintf("%s_%s%s", stem, hex.EncodeToString(token), ext)
 }
 
 func (s *Server) bindJSON(c *gin.Context, value any) bool {
