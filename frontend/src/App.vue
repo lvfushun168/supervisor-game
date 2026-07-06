@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 
 type AnyRecord = Record<string, any>
 
@@ -30,15 +30,32 @@ const user = reactive<AnyRecord>({
   accumulatedSeconds: 0,
   lastTickAt: 0,
   settlement: null,
+  patrol: {
+    nextRemainingMs: 0,
+    lastTickAt: 0,
+    count: 0,
+    warningCount: 0,
+    violationCount: 0,
+    status: '',
+    reason: '',
+    action: null,
+    failed: false,
+    finishReason: '',
+    captureErrorCode: '',
+  },
 })
 
-// TODO: 巡查状态将在 M4 接入，当前只保留状态枚举和 UI 占位。
-const reservedPatrolStates: WorkStatus[] = ['patrolWarning', 'patrolActive', 'patrolResult']
+const cameraPreview = ref<HTMLVideoElement | null>(null)
+const captureCanvas = ref<HTMLCanvasElement | null>(null)
+const actionVideo = ref<HTMLVideoElement | null>(null)
+let cameraStream: MediaStream | null = null
+let patrolRunning = false
 
 const currentScene = computed(() => user.scenes.find((scene: AnyRecord) => scene.sceneKey === user.selectedSceneKey) || user.scenes[0] || null)
 const currentSetting = computed(() => user.settings || {})
+const isTimingStatus = computed(() => ['working', 'patrolWarning', 'patrolActive', 'patrolResult'].includes(user.status))
 const currentElapsedSeconds = computed(() => {
-  const ticking = user.status === 'working' && user.lastTickAt ? Math.floor((Date.now() - user.lastTickAt) / 1000) : 0
+  const ticking = isTimingStatus.value && user.lastTickAt ? Math.floor((Date.now() - user.lastTickAt) / 1000) : 0
   return user.accumulatedSeconds + ticking
 })
 const timerSeconds = computed(() => {
@@ -50,6 +67,12 @@ const statusText = computed(() => {
   switch (user.status) {
     case 'working':
       return '劳动中'
+    case 'patrolWarning':
+      return '巡查预告'
+    case 'patrolActive':
+      return '巡查中'
+    case 'patrolResult':
+      return '巡查结果'
     case 'paused':
       return '已暂停'
     case 'finished':
@@ -114,6 +137,7 @@ onUnmounted(() => {
   window.removeEventListener('popstate', syncRoute)
   window.removeEventListener('beforeunload', finishOnUnload)
   if (timerID) window.clearInterval(timerID)
+  stopCamera()
 })
 
 async function api(path: string, options: RequestInit = {}) {
@@ -220,8 +244,14 @@ async function startWork() {
     })
     user.sessionId = result.session.id
     user.status = result.session.status
+    user.patrol.count = result.session.patrolCount || 0
+    user.patrol.warningCount = result.session.warningCount || 0
+    user.patrol.violationCount = result.session.violationCount || 0
+    resetPatrolState()
+    scheduleNextPatrol()
     user.settlement = null
     localStorage.setItem('openSessionAbandoned', String(user.sessionId))
+    if (user.settings.cameraEnabled) void ensureCamera()
   })
 }
 
@@ -230,6 +260,7 @@ async function pauseWork() {
   await userRun(async () => {
     user.accumulatedSeconds = currentElapsedSeconds.value
     user.lastTickAt = 0
+    freezePatrolTimer()
     const result = await api('/api/session/pause', {
       method: 'POST',
       body: JSON.stringify({ sessionId: user.sessionId }),
@@ -247,6 +278,7 @@ async function resumeWork() {
     })
     user.status = result.session.status
     user.lastTickAt = Date.now()
+    resumePatrolTimer()
   })
 }
 
@@ -271,6 +303,8 @@ async function finishWork(finishReason: string) {
     })
     user.settlement = result.settlement
     user.status = result.settlement.result === 'failed' || result.settlement.result === 'abandoned' ? 'failed' : 'finished'
+    resetPatrolState()
+    stopCamera()
     localStorage.removeItem('openSessionAbandoned')
     go('/settlement')
   })
@@ -278,15 +312,211 @@ async function finishWork(finishReason: string) {
 }
 
 function tickTimer() {
-  if (user.status !== 'working') return
+  if (!isTimingStatus.value) return
   if (!autoFinishing.value && user.settings?.mode !== 'infinite' && user.plannedDurationSeconds > 0 && currentElapsedSeconds.value >= user.plannedDurationSeconds) {
     autoFinishing.value = true
     void finishWork('countdown_complete')
+    return
+  }
+  tickPatrolTimer()
+}
+
+function patrolRange() {
+  const frequency = user.settings?.patrolFrequency || 'normal'
+  return user.runtime?.patrolRule?.[frequency] || user.runtime?.patrolRule?.normal || { minSeconds: 60, maxSeconds: 240 }
+}
+
+function scheduleNextPatrol() {
+  const range = patrolRange()
+  const min = Math.max(1, Number(range.minSeconds || 60))
+  const max = Math.max(min, Number(range.maxSeconds || min))
+  user.patrol.nextRemainingMs = Math.floor((min + Math.random() * (max - min)) * 1000)
+  user.patrol.lastTickAt = Date.now()
+}
+
+function resetPatrolState() {
+  user.patrol.nextRemainingMs = 0
+  user.patrol.lastTickAt = 0
+  user.patrol.status = ''
+  user.patrol.reason = ''
+  user.patrol.action = null
+  user.patrol.failed = false
+  user.patrol.finishReason = ''
+  user.patrol.captureErrorCode = ''
+  patrolRunning = false
+}
+
+function freezePatrolTimer() {
+  if (!user.patrol.lastTickAt) return
+  user.patrol.nextRemainingMs = Math.max(0, user.patrol.nextRemainingMs - (Date.now() - user.patrol.lastTickAt))
+  user.patrol.lastTickAt = 0
+}
+
+function resumePatrolTimer() {
+  if (!user.patrol.nextRemainingMs) scheduleNextPatrol()
+  user.patrol.lastTickAt = Date.now()
+}
+
+function tickPatrolTimer() {
+  if (user.status !== 'working' || patrolRunning || !user.sessionId) return
+  if (!user.patrol.nextRemainingMs) scheduleNextPatrol()
+  const now = Date.now()
+  const elapsed = user.patrol.lastTickAt ? now - user.patrol.lastTickAt : 0
+  user.patrol.lastTickAt = now
+  user.patrol.nextRemainingMs = Math.max(0, user.patrol.nextRemainingMs - elapsed)
+  if (user.patrol.nextRemainingMs <= 0) {
+    void runPatrol()
   }
 }
 
+async function runPatrol() {
+  if (patrolRunning || !user.sessionId) return
+  patrolRunning = true
+  user.patrol.captureErrorCode = ''
+  try {
+    user.status = 'patrolWarning'
+    await wait(1200)
+    user.status = 'patrolActive'
+    const capture = await captureFrame()
+    const result = await api('/api/patrol/check', {
+      method: 'POST',
+      body: JSON.stringify({
+        sessionId: user.sessionId,
+        sceneKey: user.selectedSceneKey,
+        imageBase64: capture.imageBase64,
+        cameraEnabled: capture.cameraEnabled,
+        manualViolation: false,
+        captureErrorCode: capture.captureErrorCode,
+      }),
+    })
+    user.patrol.status = result.status
+    user.patrol.reason = result.reason
+    user.patrol.action = result.action
+    user.patrol.count = result.sessionSummary?.patrolCount || user.patrol.count
+    user.patrol.warningCount = result.sessionSummary?.warningCount || 0
+    user.patrol.violationCount = result.sessionSummary?.violationCount || 0
+    user.patrol.failed = Boolean(result.sessionSummary?.failed)
+    user.patrol.finishReason = result.sessionSummary?.finishReason || ''
+    user.status = 'patrolResult'
+    await playPatrolAction()
+    if (user.patrol.failed) {
+      await finishAfterPatrolFailure()
+      return
+    }
+    user.status = 'working'
+    scheduleNextPatrol()
+  } catch (err) {
+    userError.value = err instanceof Error ? err.message : String(err)
+    user.status = 'working'
+    scheduleNextPatrol()
+  } finally {
+    patrolRunning = false
+  }
+}
+
+async function finishAfterPatrolFailure() {
+  user.accumulatedSeconds = currentElapsedSeconds.value
+  user.lastTickAt = 0
+  const reason = user.patrol.finishReason || 'max_warning'
+  const result = await api('/api/session/finish', {
+    method: 'POST',
+    body: JSON.stringify({
+      sessionId: user.sessionId,
+      finishReason: reason,
+      actualFocusSeconds: user.accumulatedSeconds,
+    }),
+  })
+  user.settlement = result.settlement
+  user.status = 'failed'
+  localStorage.removeItem('openSessionAbandoned')
+  resetPatrolState()
+  stopCamera()
+  go('/settlement')
+}
+
+async function playPatrolAction() {
+  await nextTick()
+  const video = actionVideo.value
+  if (!video || !user.patrol.action?.videoUrl) {
+    await wait(1400)
+    return
+  }
+  await new Promise<void>((resolve) => {
+    const cleanup = () => {
+      video.removeEventListener('ended', onDone)
+      video.removeEventListener('error', onError)
+    }
+    const onDone = () => {
+      cleanup()
+      resolve()
+    }
+    const onError = () => {
+      cleanup()
+      userError.value = '动作视频加载失败，请检查管理员配置。'
+      resolve()
+    }
+    video.volume = Number(user.settings?.actionVolume ?? 0.8)
+    video.addEventListener('ended', onDone, { once: true })
+    video.addEventListener('error', onError, { once: true })
+    void video.play().catch(() => onError())
+  })
+}
+
+async function ensureCamera() {
+  if (cameraStream) return cameraStream
+  if (!navigator.mediaDevices?.getUserMedia) throw new Error('DEVICE_NOT_FOUND')
+  const constraints: MediaStreamConstraints = {
+    video: user.settings?.cameraDeviceId ? { deviceId: { exact: user.settings.cameraDeviceId } } : true,
+    audio: false,
+  }
+  cameraStream = await navigator.mediaDevices.getUserMedia(constraints)
+  if (cameraPreview.value) {
+    cameraPreview.value.srcObject = cameraStream
+    await cameraPreview.value.play().catch(() => undefined)
+  }
+  return cameraStream
+}
+
+function stopCamera() {
+  if (cameraStream) {
+    cameraStream.getTracks().forEach((track) => track.stop())
+    cameraStream = null
+  }
+  if (cameraPreview.value) cameraPreview.value.srcObject = null
+}
+
+async function captureFrame() {
+  if (!user.settings?.cameraEnabled) {
+    return { imageBase64: '', cameraEnabled: false, captureErrorCode: '' }
+  }
+  try {
+    await ensureCamera()
+    const video = cameraPreview.value
+    const canvas = captureCanvas.value
+    if (!video || !canvas || video.videoWidth <= 0 || video.videoHeight <= 0) {
+      return { imageBase64: '', cameraEnabled: true, captureErrorCode: 'CAPTURE_FAILED' }
+    }
+    const maxWidth = Number(user.runtime?.vision?.maxImageWidth || 1024)
+    const scale = Math.min(1, maxWidth / video.videoWidth)
+    canvas.width = Math.max(1, Math.round(video.videoWidth * scale))
+    canvas.height = Math.max(1, Math.round(video.videoHeight * scale))
+    const context = canvas.getContext('2d')
+    if (!context) return { imageBase64: '', cameraEnabled: true, captureErrorCode: 'CAPTURE_FAILED' }
+    context.drawImage(video, 0, 0, canvas.width, canvas.height)
+    return { imageBase64: canvas.toDataURL('image/jpeg', 0.82), cameraEnabled: true, captureErrorCode: '' }
+  } catch (err) {
+    const name = err instanceof DOMException ? err.name : ''
+    const code = name === 'NotAllowedError' || name === 'SecurityError' ? 'PERMISSION_DENIED' : name === 'NotFoundError' ? 'DEVICE_NOT_FOUND' : 'CAPTURE_FAILED'
+    return { imageBase64: '', cameraEnabled: true, captureErrorCode: code }
+  }
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
 function finishOnUnload() {
-  if (!user.sessionId || (user.status !== 'working' && user.status !== 'paused')) return
+  if (!user.sessionId || (!isTimingStatus.value && user.status !== 'paused')) return
   const payload = JSON.stringify({
     sessionId: user.sessionId,
     finishReason: 'page_unload',
@@ -304,6 +534,7 @@ async function saveUserSettings() {
     user.settings = saved
     user.plannedDurationSeconds = plannedDurationFromSettings()
     localStorage.setItem('userSettings', JSON.stringify(saved))
+    if (!saved.cameraEnabled) stopCamera()
   }, '配置已保存')
 }
 
@@ -617,10 +848,19 @@ function emptyAction() {
           loop
           playsinline
         ></video>
+        <video
+          v-if="user.status === 'patrolResult' && user.patrol.action?.videoUrl"
+          ref="actionVideo"
+          class="action-video"
+          :src="'/' + user.patrol.action.videoUrl"
+          :poster="user.patrol.action.posterUrl ? '/' + user.patrol.action.posterUrl : undefined"
+          playsinline
+        ></video>
         <div class="stage-overlay">
           <div class="scene-label">{{ currentScene?.name || '暂无场景' }}</div>
           <div class="timer">{{ timerText }}</div>
           <p class="status">{{ statusText }}</p>
+          <p v-if="user.patrol.reason" class="patrol-reason">{{ user.patrol.reason }}</p>
           <div class="actions">
             <button v-if="user.status === 'idle' || user.status === 'finished' || user.status === 'failed'" type="button" @click="startWork">开始劳动</button>
             <button v-if="user.status === 'working'" type="button" @click="pauseWork">暂停</button>
@@ -638,12 +878,19 @@ function emptyAction() {
           </select>
         </label>
         <dl>
-          <div><dt>警告</dt><dd>0/{{ user.runtime?.patrolRule?.maxWarnings || 3 }}</dd></div>
-          <div><dt>今日案底</dt><dd>0</dd></div>
+          <div><dt>警告</dt><dd>{{ user.patrol.warningCount }}/{{ user.runtime?.patrolRule?.maxWarnings || 3 }}</dd></div>
+          <div><dt>案底</dt><dd>{{ user.patrol.violationCount }}/{{ user.runtime?.patrolRule?.maxViolations || 3 }}</dd></div>
+          <div><dt>巡查</dt><dd>{{ user.patrol.count }} 次</dd></div>
+          <div><dt>下次巡查</dt><dd>{{ user.status === 'working' ? formatSeconds(user.patrol.nextRemainingMs / 1000) : '--:--' }}</dd></div>
           <div><dt>徽章等级</dt><dd>Lv.{{ user.settlement?.levelAfter || 1 }}</dd></div>
           <div><dt>货币</dt><dd>{{ user.settlement?.currencyAfter || 0 }}</dd></div>
-          <div><dt>状态预留</dt><dd>{{ reservedPatrolStates.length }} 个</dd></div>
+          <div><dt>巡查结果</dt><dd>{{ user.patrol.status || '待命' }}</dd></div>
         </dl>
+        <div class="camera-box">
+          <video ref="cameraPreview" autoplay muted playsinline></video>
+          <canvas ref="captureCanvas" hidden></canvas>
+          <span>{{ user.settings?.cameraEnabled ? '摄像头预览' : '摄像头关闭' }}</span>
+        </div>
         <nav class="quick-nav">
           <button type="button" class="secondary" @click="go('/settings')">配置</button>
           <button type="button" class="secondary" @click="showPlaceholder('档案')">档案</button>

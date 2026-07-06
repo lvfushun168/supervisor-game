@@ -65,6 +65,7 @@ func (s *Server) Handler() http.Handler {
 	api.POST("/session/pause", s.pauseSession)
 	api.POST("/session/resume", s.resumeSession)
 	api.POST("/session/finish", s.finishSession)
+	api.POST("/patrol/check", s.checkPatrol)
 
 	admin := api.Group("/admin")
 	admin.Use(s.adminAuth())
@@ -229,6 +230,15 @@ func (s *Server) adminStatusInput() service.AdminStatusInput {
 }
 
 func (s *Server) writeError(c *gin.Context, err error) {
+	var patrolErr service.PatrolError
+	if errors.As(err, &patrolErr) {
+		status := http.StatusInternalServerError
+		if patrolErr.Code == service.PatrolErrActionConfigMissing || patrolErr.Code == service.PatrolErrCameraFrameMissing || patrolErr.Code == service.PatrolErrModelConfigMissing {
+			status = http.StatusBadRequest
+		}
+		s.writeAPIError(c, status, patrolErr.Code, patrolErr.Message)
+		return
+	}
 	switch {
 	case errors.Is(err, service.ErrDatabaseUnavailable):
 		s.writeAPIError(c, http.StatusServiceUnavailable, "DATABASE_UNAVAILABLE", "数据库暂不可用，请检查 DB_DSN。")

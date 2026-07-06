@@ -1,6 +1,12 @@
 package service
 
-import "supervisor-game/internal/model"
+import (
+	"encoding/json"
+
+	"supervisor-game/internal/model"
+
+	"gorm.io/gorm"
+)
 
 const emptyJSON = "{}"
 
@@ -57,8 +63,8 @@ func DefaultScene() model.Scene {
 		BackgroundPosterURL:      "assets/scenes/study_room.jpg",
 		AmbientAudioURL:          "assets/audio/library_noise.mp3",
 		DefaultActionKey:         "patrol_normal",
-		AvailableActionKeysJSON:  `["patrol_enter","patrol_normal","patrol_phone","patrol_sleeping","patrol_absent","finish_success","fail"]`,
-		ModelResultActionMapJSON: `{"normal":"patrol_normal","phone":"patrol_phone","sleeping":"patrol_sleeping","absent":"patrol_absent","success":"finish_success","failed":"fail"}`,
+		AvailableActionKeysJSON:  `["patrol_enter","patrol_normal","patrol_suspicious","patrol_violation","patrol_phone","patrol_sleeping","patrol_absent","finish_success","fail"]`,
+		ModelResultActionMapJSON: `{"normal":"patrol_normal","suspicious":"patrol_suspicious","violation":"patrol_violation","using_phone":"patrol_phone","sleeping":"patrol_sleeping","absent":"patrol_absent","uncertain":"patrol_suspicious","success":"finish_success","failed":"fail"}`,
 		MetadataJSON:             emptyJSON,
 	}
 }
@@ -67,6 +73,8 @@ func DefaultActions() []model.ActionConfig {
 	return []model.ActionConfig{
 		defaultAction("patrol_enter", "巡查入场", 10, "assets/actions/study_room/patrol_enter.mp4", "patrol_normal"),
 		defaultAction("patrol_normal", "正常巡查", 20, "assets/actions/study_room/patrol_normal.mp4", ""),
+		defaultAction("patrol_suspicious", "可疑提醒", 25, "assets/actions/study_room/patrol_suspicious.mp4", ""),
+		defaultAction("patrol_violation", "违规训诫", 28, "assets/actions/study_room/patrol_violation.mp4", ""),
 		defaultAction("patrol_phone", "手机违规", 30, "assets/actions/study_room/patrol_phone.mp4", ""),
 		defaultAction("patrol_sleeping", "睡觉违规", 30, "assets/actions/study_room/patrol_sleeping.mp4", ""),
 		defaultAction("patrol_absent", "离席违规", 30, "assets/actions/study_room/patrol_absent.mp4", ""),
@@ -173,4 +181,63 @@ func defaultTask(taskKey string, name string, description string, taskType strin
 		SortOrder:      sortOrder,
 		MetadataJSON:   emptyJSON,
 	}
+}
+
+func ensureM4DefaultSceneMappings(tx *gorm.DB) error {
+	var scene model.Scene
+	if err := tx.Where("scene_key = ?", "study_room").First(&scene).Error; err != nil {
+		return err
+	}
+
+	changed := false
+	var actionKeys []string
+	if err := json.Unmarshal([]byte(scene.AvailableActionKeysJSON), &actionKeys); err != nil {
+		actionKeys = []string{}
+	}
+	seen := map[string]bool{}
+	for _, key := range actionKeys {
+		seen[key] = true
+	}
+	for _, key := range []string{"patrol_suspicious", "patrol_violation"} {
+		if !seen[key] {
+			actionKeys = append(actionKeys, key)
+			changed = true
+		}
+	}
+
+	mapping := map[string]string{}
+	if err := json.Unmarshal([]byte(scene.ModelResultActionMapJSON), &mapping); err != nil {
+		mapping = map[string]string{}
+	}
+	defaultMapping := map[string]string{
+		"normal":      "patrol_normal",
+		"suspicious":  "patrol_suspicious",
+		"violation":   "patrol_violation",
+		"using_phone": "patrol_phone",
+		"sleeping":    "patrol_sleeping",
+		"absent":      "patrol_absent",
+		"uncertain":   "patrol_suspicious",
+	}
+	for status, actionKey := range defaultMapping {
+		if mapping[status] == "" {
+			mapping[status] = actionKey
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+
+	availableJSON, err := json.Marshal(actionKeys)
+	if err != nil {
+		return err
+	}
+	mappingJSON, err := json.Marshal(mapping)
+	if err != nil {
+		return err
+	}
+	return tx.Model(&scene).Updates(map[string]any{
+		"available_action_keys_json":   string(availableJSON),
+		"model_result_action_map_json": string(mappingJSON),
+	}).Error
 }

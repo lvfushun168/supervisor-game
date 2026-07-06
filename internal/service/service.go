@@ -44,6 +44,7 @@ type RuntimeConfig struct {
 	PatrolRule  RuntimePatrolRule  `json:"patrolRule"`
 	Character   RuntimeCharacter   `json:"character"`
 	UserSetting RuntimeUserSetting `json:"userSetting"`
+	Vision      RuntimeVision      `json:"vision"`
 }
 
 type RuntimeApp struct {
@@ -71,6 +72,10 @@ type RuntimePatrolRange struct {
 type RuntimeCharacter struct {
 	CharacterKey string `json:"characterKey"`
 	Name         string `json:"name"`
+}
+
+type RuntimeVision struct {
+	MaxImageWidth int `json:"maxImageWidth"`
 }
 
 type RuntimeUserSetting struct {
@@ -108,6 +113,11 @@ func (s *Service) RuntimeConfig() (RuntimeConfig, error) {
 	if err != nil {
 		return RuntimeConfig{}, err
 	}
+	modelConfig := model.ModelConfig{}
+	maxImageWidth := DefaultModelConfig().MaxImageWidth
+	if err := s.repo.DB().Where("enabled = ?", true).Order("updated_at DESC, id DESC").First(&modelConfig).Error; err == nil && modelConfig.MaxImageWidth > 0 {
+		maxImageWidth = modelConfig.MaxImageWidth
+	}
 
 	return RuntimeConfig{
 		App: RuntimeApp{
@@ -139,6 +149,9 @@ func (s *Service) RuntimeConfig() (RuntimeConfig, error) {
 			Name:         character.Name,
 		},
 		UserSetting: toRuntimeUserSetting(setting),
+		Vision: RuntimeVision{
+			MaxImageWidth: maxImageWidth,
+		},
 	}, nil
 }
 
@@ -201,6 +214,9 @@ func (s *Service) SeedDefaults() error {
 			if err := repo.UpsertAction(action); err != nil {
 				return err
 			}
+		}
+		if err := ensureM4DefaultSceneMappings(tx); err != nil {
+			return err
 		}
 		if err := repo.EnsurePatrolRule(DefaultPatrolRule()); err != nil {
 			return err
