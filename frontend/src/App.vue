@@ -1179,27 +1179,32 @@ function emptyAction(sceneKey = 'study_room') {
     <p v-if="userError" class="notice danger floating-notice">{{ userError }}</p>
   </main>
 
+  <main v-else-if="!adminUnlocked" class="admin-login-screen">
+    <section class="admin-login-card">
+      <p class="eyebrow">本地管理</p>
+      <h1>维护后台</h1>
+      <form class="admin-login-form" @submit.prevent="activateAdmin">
+        <input v-model="adminKey" type="password" placeholder="APP_KEY" autofocus />
+        <button type="submit">进入</button>
+      </form>
+      <p v-if="loading" class="notice">处理中...</p>
+      <p v-if="error" class="notice danger">{{ error }}</p>
+    </section>
+  </main>
+
   <main v-else class="admin-shell">
     <header class="admin-topbar">
       <div>
         <p class="eyebrow">本地管理</p>
         <h1>维护后台</h1>
       </div>
-      <form class="appkey-box" @submit.prevent="activateAdmin">
-        <input v-model="adminKey" type="password" placeholder="APP_KEY" />
-        <button type="submit">进入</button>
-      </form>
     </header>
 
     <p v-if="loading" class="notice">处理中...</p>
     <p v-if="message" class="notice success">{{ message }}</p>
     <p v-if="error" class="notice danger">{{ error }}</p>
 
-    <section v-if="!adminUnlocked" class="admin-panel admin-login-panel">
-      <h2>请输入 appkey 后进入维护后台</h2>
-    </section>
-
-    <nav v-if="adminUnlocked" class="admin-tabs" aria-label="管理端标签">
+    <nav class="admin-tabs" aria-label="管理端标签">
       <button
         v-for="[key, label] in tabs"
         :key="key"
