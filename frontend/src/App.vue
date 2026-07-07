@@ -6,7 +6,7 @@ type AnyRecord = Record<string, any>
 const isAdmin = window.location.pathname === '/__admin'
 const adminKey = ref(new URLSearchParams(window.location.search).get('appkey') || localStorage.getItem('adminAppKey') || '')
 const adminUnlocked = ref(false)
-const activeTab = ref('status')
+const activeTab = ref('characters')
 const loading = ref(false)
 const message = ref('')
 const error = ref('')
@@ -91,8 +91,6 @@ const routeName = computed(() => {
 })
 
 const tabs = [
-  ['status', '运行状态'],
-  ['runtime', '运行时预览'],
   ['characters', '督学员'],
   ['scenes', '场景'],
   ['actions', '事件视频'],
@@ -128,6 +126,7 @@ const state = reactive<AnyRecord>({
   characterDrawerOpen: false,
   sceneDrawerOpen: false,
   actionDrawerOpen: false,
+  preflightOpen: false,
   modelInput: {},
   mysqlInput: {},
 })
@@ -137,6 +136,7 @@ const adminHeaders = computed(() => ({
   'X-App-Key': adminKey.value,
 }))
 const adminSceneOptions = computed(() => state.scenes || [])
+const preflightItems = computed(() => buildPreflightItems())
 
 onMounted(() => {
   if (isAdmin && adminKey.value) {
@@ -699,6 +699,26 @@ async function loadMySQL() {
   state.mysqlInput = { ...state.mysql, password: '', enabled: Boolean(state.mysql.enabled) }
 }
 
+async function openPreflight() {
+  state.preflightOpen = true
+  await run(async () => {
+    await Promise.all([
+      loadStatus(),
+      loadRuntime(),
+      loadCharacters(),
+      loadScenes(),
+      loadActions(),
+      loadModel(),
+      loadPatrol(),
+      loadMySQL(),
+    ])
+  }, '检查已更新')
+}
+
+function closePreflight() {
+  state.preflightOpen = false
+}
+
 function activateAdmin() {
   if (!adminKey.value.trim()) {
     error.value = '请输入 appkey。'
@@ -932,6 +952,60 @@ function formatDurationMs(value: number) {
   const minutes = Math.floor(seconds / 60)
   const rest = seconds % 60
   return `${minutes}:${String(rest).padStart(2, '0')}`
+}
+
+function buildPreflightItems() {
+  const enabledScenes = (state.scenes || []).filter((scene: AnyRecord) => scene.enabled)
+  const enabledActions = (state.actions || []).filter((action: AnyRecord) => action.enabled)
+  const requiredActionKeys = actionEvents.map((event) => event.key)
+  const missingActionLabels = requiredActionKeys
+    .filter((key) => !enabledActions.some((action: AnyRecord) => action.actionKey === key && action.videoUrl))
+    .map(actionEventLabel)
+
+  return [
+    {
+      status: state.status?.database?.status === 'connected' ? 'ok' : 'error',
+      title: '数据库连接',
+      detail: state.status?.database?.status === 'connected' ? 'MySQL 已连接。' : '数据库未连接，用户数据和配置无法正常保存。',
+    },
+    {
+      status: state.status?.assetsAvailable ? 'ok' : 'warn',
+      title: '素材目录',
+      detail: state.status?.assetsAvailable ? 'assets 目录可访问。' : 'assets 目录暂未检测到，上传素材后会自动创建。',
+    },
+    {
+      status: enabledScenes.length > 0 ? 'ok' : 'error',
+      title: '启用场景',
+      detail: enabledScenes.length > 0 ? `已启用 ${enabledScenes.length} 个场景。` : '至少需要启用 1 个场景。',
+    },
+    {
+      status: enabledScenes.every((scene: AnyRecord) => scene.backgroundUrl || scene.backgroundVideoUrl) ? 'ok' : 'error',
+      title: '场景背景',
+      detail: enabledScenes.every((scene: AnyRecord) => scene.backgroundUrl || scene.backgroundVideoUrl)
+        ? '启用场景都已配置背景素材。'
+        : '有启用场景缺少背景图片或背景视频。',
+    },
+    {
+      status: missingActionLabels.length === 0 ? 'ok' : 'error',
+      title: '事件视频',
+      detail: missingActionLabels.length === 0 ? '核心事件视频都已配置。' : `缺少事件视频：${missingActionLabels.join('、')}。`,
+    },
+    {
+      status: state.model?.enabled && state.model?.hasApiKey ? 'ok' : 'warn',
+      title: '大模型',
+      detail: state.model?.enabled && state.model?.hasApiKey ? '视觉模型已启用并配置 API Key。' : '大模型未启用或缺少 API Key，巡查判定可能无法工作。',
+    },
+    {
+      status: state.patrol ? 'ok' : 'error',
+      title: '巡查规则',
+      detail: state.patrol ? '巡查规则已配置。' : '缺少巡查规则。',
+    },
+    {
+      status: state.status?.restartRequired ? 'warn' : 'ok',
+      title: '重启状态',
+      detail: state.status?.restartRequired ? '存在需要重启后生效的配置。' : '当前没有检测到待重启状态。',
+    },
+  ]
 }
 
 async function bindActionToScene(action: AnyRecord) {
@@ -1198,6 +1272,7 @@ function emptyAction(sceneKey = 'study_room') {
         <p class="eyebrow">本地管理</p>
         <h1>维护后台</h1>
       </div>
+      <button type="button" @click="openPreflight">发布前检查</button>
     </header>
 
     <p v-if="loading" class="notice">处理中...</p>
@@ -1215,22 +1290,6 @@ function emptyAction(sceneKey = 'study_room') {
         {{ label }}
       </button>
     </nav>
-
-    <section v-if="adminUnlocked && activeTab === 'status'" class="admin-panel">
-      <div class="panel-title">
-        <h2>运行状态</h2>
-        <button type="button" @click="loadStatus">刷新</button>
-      </div>
-      <pre>{{ JSON.stringify(state.status, null, 2) }}</pre>
-    </section>
-
-    <section v-if="adminUnlocked && activeTab === 'runtime'" class="admin-panel">
-      <div class="panel-title">
-        <h2>运行时配置预览</h2>
-        <button type="button" @click="loadRuntime">刷新</button>
-      </div>
-      <pre>{{ JSON.stringify(state.runtime, null, 2) }}</pre>
-    </section>
 
     <section v-if="adminUnlocked && activeTab === 'characters'" class="admin-panel">
       <div class="panel-title">
@@ -1480,5 +1539,24 @@ function emptyAction(sceneKey = 'study_room') {
       </form>
       <pre>{{ JSON.stringify(state.mysql, null, 2) }}</pre>
     </section>
+
+    <div v-if="adminUnlocked && state.preflightOpen" class="modal-backdrop" @click.self="closePreflight">
+      <section class="modal-panel" aria-label="发布前检查">
+        <div class="panel-title">
+          <h2>发布前检查</h2>
+          <button type="button" class="secondary" @click="closePreflight">关闭</button>
+        </div>
+        <div class="preflight-list">
+          <div v-for="item in preflightItems" :key="item.title" class="preflight-item" :class="item.status">
+            <span>{{ item.status === 'ok' ? '通过' : item.status === 'warn' ? '注意' : '阻塞' }}</span>
+            <div>
+              <strong>{{ item.title }}</strong>
+              <p>{{ item.detail }}</p>
+            </div>
+          </div>
+        </div>
+        <button type="button" @click="openPreflight">重新检查</button>
+      </section>
+    </div>
   </main>
 </template>

@@ -501,6 +501,78 @@ label.check {
   background: rgba(15, 19, 24, 0.78);
 }
 
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.58);
+}
+
+.modal-panel {
+  width: min(680px, 100%);
+  max-height: min(760px, calc(100vh - 48px));
+  overflow: auto;
+  padding: 20px;
+  color: #ecf1f7;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: #171c22;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+
+.preflight-list {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.preflight-item {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.preflight-item > span {
+  border-radius: 999px;
+  padding: 4px 8px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.preflight-item.ok > span {
+  color: #d7f0da;
+  background: rgba(54, 117, 61, 0.4);
+}
+
+.preflight-item.warn > span {
+  color: #101318;
+  background: #e6c86f;
+}
+
+.preflight-item.error > span {
+  color: #fff;
+  background: #9b2d30;
+}
+
+.preflight-item strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.preflight-item p {
+  margin: 0;
+  color: #aeb7c3;
+}
+
 input,
 textarea,
 select {
